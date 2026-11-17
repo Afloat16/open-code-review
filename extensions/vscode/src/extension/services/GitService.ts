@@ -123,7 +123,8 @@ export class GitService {
       if (!api || cancelled) return;
 
       const repo = await this.waitForRepo();
-      if (!cancelled && repo) attachRepo(repo);
+      if (cancelled) return;
+      if (repo) attachRepo(repo);
 
       if (api.onDidOpenRepository) {
         cleanups.push(api.onDidOpenRepository(() => {
