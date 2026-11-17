@@ -56,6 +56,9 @@ func readWorkspaceFileForDiffWithLimit(repoDir, relPath string, maxSize int64) (
 		}
 		return []byte(target), nil
 	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("file path %q is not a regular file", relPath)
+	}
 	if maxSize > 0 && info.Size() > maxSize {
 		return nil, errWorkspaceFileTooLarge
 	}
