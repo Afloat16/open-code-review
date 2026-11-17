@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 alibaba/open-code-review Contributors
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { ConfigEntry } from '@shared/configUtils';
@@ -91,9 +91,30 @@ export class ConfigService {
   }
 
   async setMany(entries: { key: string; value: string }[]): Promise<OcrConfig | null> {
-    for (const entry of entries) {
-      await this.cli.runRaw(toConfigSetArgs(entry.key, entry.value), process.cwd(), () => {});
+    if (entries.length === 0) return this.read();
+    const target = this.configPath();
+    const before = existsSync(target) ? readFileSync(target) : null;
+    const dir = dirname(target);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const temporaryHome = mkdtempSync(join(dir, '.config-batch-'));
+    try {
+      const draftDir = join(temporaryHome, '.opencodereview');
+      const draft = join(draftDir, 'config.json');
+      mkdirSync(draftDir, { mode: 0o700 });
+      if (before) writeFileSync(draft, before, { mode: 0o600 });
+      for (const entry of entries) {
+        await this.cli.runRaw(toConfigSetArgs(entry.key, entry.value), process.cwd(), () => {}, {
+          HOME: temporaryHome, USERPROFILE: temporaryHome,
+        });
+      }
+      const current = existsSync(target) ? readFileSync(target) : null;
+      if (before === null ? current !== null : current === null || !before.equals(current)) {
+        throw new Error('Configuration changed while saving settings; retry the batch.');
+      }
+      renameSync(draft, target);
+      return this.read();
+    } finally {
+      rmSync(temporaryHome, { recursive: true, force: true });
     }
-    return this.read();
   }
 }
