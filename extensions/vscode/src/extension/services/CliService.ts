@@ -116,6 +116,7 @@ export class CliService {
     cwd: string,
     onLog: (l: LogLine) => void,
     envExtra?: Record<string, string>,
+    options: { cancellable?: boolean } = {},
   ): Promise<string> {
     return new Promise((resolve, reject) => {
       const proc = spawn(resolveBin(this.cliPath), args, {
@@ -125,7 +126,7 @@ export class CliService {
         // leaving the native CLI or any of its subprocesses behind.
         detached: process.platform !== 'win32',
       });
-      this.current = proc;
+      if (options.cancellable !== false) this.current = proc;
       let stdout = '';
       let stderr = '';
       proc.stdout.on('data', (d) => { stdout += d.toString(); });
@@ -137,9 +138,12 @@ export class CliService {
           if (parsed) onLog(parsed);
         }
       });
-      proc.on('error', (err) => { this.current = null; reject(err); });
+      proc.on('error', (err) => {
+        if (this.current === proc) this.current = null;
+        reject(err);
+      });
       proc.on('close', (code) => {
-        this.current = null;
+        if (this.current === proc) this.current = null;
         if (code === 0) { resolve(stdout); return; }
         reject(new CliExitError(code, stdout, extractCliError(stderr) || `CLI exited with code ${code}`));
       });
@@ -172,7 +176,7 @@ export class CliService {
     }
     const env = Object.keys(envExtra).length > 0 ? envExtra : undefined;
     try {
-      await this.runRaw(['llm', 'test'], process.cwd(), () => {}, env);
+      await this.runRaw(['llm', 'test'], process.cwd(), () => {}, env, { cancellable: false });
       return { ok: true };
     } catch (e) {
       return { ok: false, message: e instanceof Error ? e.message : String(e) };

@@ -86,13 +86,13 @@ export class ConfigService {
   }
 
   async set(key: string, value: string): Promise<OcrConfig | null> {
-    await this.cli.runRaw(toConfigSetArgs(key, value), process.cwd(), () => {});
+    await this.cli.runRaw(toConfigSetArgs(key, value), process.cwd(), () => {}, undefined, { cancellable: false });
     return this.read();
   }
 
   async setMany(entries: { key: string; value: string }[]): Promise<OcrConfig | null> {
     for (const entry of entries) {
-      await this.cli.runRaw(toConfigSetArgs(entry.key, entry.value), process.cwd(), () => {});
+      await this.cli.runRaw(toConfigSetArgs(entry.key, entry.value), process.cwd(), () => {}, undefined, { cancellable: false });
     }
     return this.read();
   }
