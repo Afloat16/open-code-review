@@ -149,6 +149,7 @@ func (p *FileFindProvider) listGitFiles(parentCtx context.Context) ([]string, er
 	}
 
 	var files []string
+	seen := make(map[string]bool)
 	lines := bytes.Split(bytes.TrimRight(output, "\n"), []byte{'\n'})
 	for _, line := range lines {
 		if len(line) > 0 {
@@ -158,6 +159,11 @@ func (p *FileFindProvider) listGitFiles(parentCtx context.Context) ([]string, er
 			if shouldSkipFile(s) {
 				continue
 			}
+			// An unmerged index lists the same path once for each conflict stage.
+			if seen[s] {
+				continue
+			}
+			seen[s] = true
 			files = append(files, s)
 		}
 	}
