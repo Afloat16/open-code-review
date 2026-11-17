@@ -59,7 +59,7 @@ function applyProviderField(entry: RawProviderEntry, field: string, value: strin
 function setCustomProviderField(cfg: RawConfig, name: string, field: string, value: string): void {
   if (!isValidProviderName(name)) return;
   if (name.includes('.') && !Object.prototype.hasOwnProperty.call(cfg.custom_providers ?? {}, name)) return;
-  if (!cfg.custom_providers) cfg.custom_providers = {};
+  if (!cfg.custom_providers) cfg.custom_providers = Object.create(null) as Record<string, RawProviderEntry>;
   const entry = { ...(cfg.custom_providers[name] ?? {}) };
   applyProviderField(entry, field, value);
   cfg.custom_providers[name] = entry;
@@ -96,7 +96,7 @@ function setConfigValue(cfg: RawConfig, key: string, value: string): void {
         if (!cfg.providers) cfg.providers = {};
         if (!cfg.providers[value]) cfg.providers[value] = {};
       } else if (value) {
-        if (!cfg.custom_providers) cfg.custom_providers = {};
+        if (!cfg.custom_providers) cfg.custom_providers = Object.create(null) as Record<string, RawProviderEntry>;
         if (!cfg.custom_providers[value]) cfg.custom_providers[value] = {};
       }
       break;
@@ -142,6 +142,9 @@ function setConfigValue(cfg: RawConfig, key: string, value: string): void {
 /** Merge config set entries into the raw config JSON in memory without writing to disk. */
 export function applyConfigEntries(base: RawConfig, entries: ConfigEntry[]): RawConfig {
   const draft: RawConfig = JSON.parse(JSON.stringify(base));
+  if (draft.custom_providers) {
+    draft.custom_providers = Object.assign(Object.create(null), draft.custom_providers);
+  }
   for (const entry of entries) {
     setConfigValue(draft, entry.key, entry.value);
   }
