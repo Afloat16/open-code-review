@@ -5,10 +5,10 @@ package rules
 
 import (
 	"bufio"
-	"bytes"
 	"context"
+	"errors"
+	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -19,6 +19,8 @@ import (
 // sniffTimeout bounds a single content peek. A peek is a best-effort hint, so
 // exceeding it yields "" (no sniff) rather than failing the whole resolution.
 const sniffTimeout = 5 * time.Second
+
+var errSniffComplete = errors.New("first non-blank line found")
 
 // systemLayer is the subset of *SystemRule that composedResolver depends on.
 // Declaring it lets the lowest layer be decorated (see sniffer) without any
@@ -97,7 +99,7 @@ func (s *sniffer) sniffsAsObjC(path string) bool {
 // match — matlab.md — in place.
 func (s *sniffer) peekFirstLine(path string) string {
 	if s.ref != "" {
-		return firstNonBlankLine(s.showAtRef(path))
+		return s.peekAtRef(path)
 	}
 
 	f, err := os.Open(filepath.Join(s.repoDir, path))
@@ -115,30 +117,38 @@ func (s *sniffer) peekFirstLine(path string) string {
 	return ""
 }
 
-// showAtRef reads path's content at s.ref via `git show <ref>:<path>`.
-// Returns "" when the file does not exist at that ref or git fails.
-func (s *sniffer) showAtRef(path string) string {
+// peekAtRef stops git show once the first non-blank line is available, so a
+// rule hint does not buffer the remainder of a potentially large blob.
+func (s *sniffer) peekAtRef(path string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), sniffTimeout)
 	defer cancel()
 
 	args := []string{"-c", "core.quotepath=false", "show", "--end-of-options", s.ref + ":" + path}
 
-	if s.runner != nil {
-		out, err := s.runner.Output(ctx, s.repoDir, args...)
-		if err != nil {
-			return ""
-		}
-		return string(out)
+	runner := s.runner
+	if runner == nil {
+		runner = gitcmd.New(1)
 	}
-
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = s.repoDir
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
+	var first string
+	err := runner.Stream(ctx, s.repoDir, func(stdout io.Reader) error {
+		reader := bufio.NewReader(stdout)
+		for {
+			line, err := reader.ReadString('\n')
+			if first = firstNonBlankLine(line); first != "" {
+				return errSniffComplete
+			}
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					return nil
+				}
+				return err
+			}
+		}
+	}, args...)
+	if err != nil && !errors.Is(err, errSniffComplete) {
 		return ""
 	}
-	return stdout.String()
+	return first
 }
 
 // objcSniffPrefixes are first-line signals for Objective-C. MATLAB comments
