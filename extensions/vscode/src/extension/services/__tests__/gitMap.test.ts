@@ -123,8 +123,8 @@ describe('buildWorkspaceFiles', () => {
 });
 
 describe('parseUntrackedList', () => {
-  it('parses untracked paths and ignores blank lines', () => {
-    expect(parseUntrackedList('src/a.ts\n\n src/b.ts \n')).toEqual(['src/a.ts', 'src/b.ts']);
+  it('preserves filename whitespace and ignores empty records', () => {
+    expect(parseUntrackedList('src/a.ts\n\n src/b.ts \n')).toEqual(['src/a.ts', ' src/b.ts ']);
   });
 });
 
@@ -148,6 +148,17 @@ describe('unquoteGitPath', () => {
 
   it('returns ordinary paths unchanged', () => {
     expect(unquoteGitPath('src/a.ts')).toBe('src/a.ts');
+  });
+
+  it('preserves literal UTF-8 around escaped characters', () => {
+    expect(unquoteGitPath('"\u8def\u5f84\\t\u{1f680}.ts"')).toBe('\u8def\u5f84\t\u{1f680}.ts');
+  });
+
+  it.each([
+    ['a', '\x07'], ['b', '\b'], ['f', '\f'], ['v', '\v'],
+    ['n', '\n'], ['r', '\r'], ['t', '\t'], ['\\', '\\'], ['"', '"'],
+  ])('decodes the Git C escape %s', (escape, decoded) => {
+    expect(unquoteGitPath(`"path\\${escape}.ts"`)).toBe(`path${decoded}.ts`);
   });
 });
 

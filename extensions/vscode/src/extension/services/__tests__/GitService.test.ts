@@ -40,6 +40,24 @@ describe('GitService workspace files', () => {
     ]);
   });
 
+  const specialPathTest = process.platform === 'win32' ? it.skip : it;
+  specialPathTest.each(['untracked', 'committed'])('preserves %s paths returned by real Git', async (mode) => {
+    const paths = [' leading.ts', 'trailing.ts ', '\u8def\u5f84\t\u{1f680}.ts', 'bell\x07.ts', 'back\b.ts', 'form\f.ts', 'vertical\v.ts'];
+    for (const filename of paths) {
+      await writeFile(path.join(repoRoot, filename), 'export const value = true;\n');
+    }
+    let files;
+    if (mode === 'committed') {
+      await execFileAsync('git', ['add', '--all'], { cwd: repoRoot });
+      await execFileAsync('git', ['-c', 'user.name=Test User', '-c', 'user.email=test@example.com', 'commit', '-q', '-m', 'paths'], { cwd: repoRoot });
+      files = await new GitService().getCommitFiles('HEAD');
+    } else {
+      files = (await new GitService().getState(ReviewMode.Workspace)).workspaceFiles;
+    }
+    expect(files).toHaveLength(paths.length);
+    expect(files).toEqual(expect.arrayContaining(paths.map((filename) => ({ path: filename, status: 'added' }))));
+  });
+
   it('lists merge commit files relative to the first parent', async () => {
     await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: repoRoot });
     await execFileAsync('git', ['config', 'user.name', 'Test User'], { cwd: repoRoot });

@@ -50,7 +50,7 @@ export function parsePorcelain(output: string): FileChange[] {
 
 /** Parse untracked paths from `git ls-files --others --exclude-standard` output. */
 export function parseUntrackedList(output: string): string[] {
-  return output.split('\n').map((line) => unquoteGitPath(line.trim())).filter(Boolean);
+  return output.split('\n').filter(Boolean).map(unquoteGitPath);
 }
 
 /** Merge tracked changes with untracked files, deduplicating by path. */
@@ -130,28 +130,27 @@ export function branchRefCandidates(ref: string): string[] {
 export function unquoteGitPath(path: string): string {
   if (!path.startsWith('"') || !path.endsWith('"')) return path;
 
-  const bytes: number[] = [];
+  const chunks: Buffer[] = [];
   const inner = path.slice(1, -1);
+  const escapes: Record<string, string> = {
+    a: '\x07', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v',
+    '\\': '\\', '"': '"',
+  };
+  let literalStart = 0;
   for (let i = 0; i < inner.length; i++) {
-    if (inner[i] !== '\\' || i + 1 >= inner.length) {
-      bytes.push(inner.charCodeAt(i));
-      continue;
-    }
-    if (i + 3 < inner.length && /^\d{3}$/.test(inner.slice(i + 1, i + 4))) {
-      bytes.push(parseInt(inner.slice(i + 1, i + 4), 8));
+    if (inner[i] !== '\\' || i + 1 >= inner.length) continue;
+    chunks.push(Buffer.from(inner.slice(literalStart, i), 'utf8'));
+    if (i + 3 < inner.length && /^[0-7]{3}$/.test(inner.slice(i + 1, i + 4))) {
+      chunks.push(Buffer.from([parseInt(inner.slice(i + 1, i + 4), 8)]));
       i += 3;
-      continue;
+    } else {
+      i += 1;
+      chunks.push(Buffer.from(escapes[inner[i]] ?? inner[i], 'utf8'));
     }
-    i += 1;
-    const esc = inner[i];
-    if (esc === 'n') bytes.push(0x0a);
-    else if (esc === 't') bytes.push(0x09);
-    else if (esc === 'r') bytes.push(0x0d);
-    else if (esc === '\\') bytes.push(0x5c);
-    else if (esc === '"') bytes.push(0x22);
-    else bytes.push(esc.charCodeAt(0));
+    literalStart = i + 1;
   }
-  return Buffer.from(bytes).toString('utf8');
+  chunks.push(Buffer.from(inner.slice(literalStart), 'utf8'));
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 /**
