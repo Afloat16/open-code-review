@@ -14,6 +14,7 @@ export class GitService {
   private api: any | null = null;
   private cache: GitState = { branches: [], currentBranch: '', recentCommits: [], workspaceFiles: [] };
   private reviewFileStatus = new Map<string, FileChange['status']>();
+  private workspaceRefresh = 0;
 
   constructor(private log?: vscode.OutputChannel) {}
 
@@ -144,7 +145,9 @@ export class GitService {
 
   /** In workspace mode, refresh only changed files without waiting for the Git extension or fetching branches and history. */
   private async refreshWorkspaceFiles(): Promise<void> {
+    const refresh = ++this.workspaceRefresh;
     const root = await this.repoRootFast();
+    if (refresh !== this.workspaceRefresh) return;
     if (!root) {
       this.cache.workspaceFiles = [];
       return;
@@ -160,9 +163,11 @@ export class GitService {
       if (!diffHeadOut.trim()) {
         diffCachedOut = await runGit(root, ['diff', '--cached', '--name-status']);
       }
+      if (refresh !== this.workspaceRefresh) return;
       this.cache.workspaceFiles = buildWorkspaceFiles(diffHeadOut, diffCachedOut, untrackedOut);
       this.trace(`refreshWorkspaceFiles: root=${root} files=${this.cache.workspaceFiles.length}`);
     } catch (e) {
+      if (refresh !== this.workspaceRefresh) return;
       this.trace(`refreshWorkspaceFiles failed: ${e instanceof Error ? e.message : String(e)}`);
       this.cache.workspaceFiles = [];
     }
