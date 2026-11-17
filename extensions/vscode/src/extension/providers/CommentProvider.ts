@@ -145,13 +145,20 @@ export class CommentProvider {
     }
     const c = this.comments[index];
     if (!c) return;
+    const mount = this.mounts.get(index);
+    if (!mount || mount.side !== 'workspace') {
+      vscode.window.showErrorMessage(t(this.locale, 'ext.comment.applyFailedStale'));
+      return;
+    }
     const root = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
     if (!root) return;
     const uri = vscode.Uri.file(`${root}/${c.path}`);
     const doc = await vscode.workspace.openTextDocument(uri);
     const before = doc.lineCount;
-    const start = Math.max(0, this.offsets.adjusted(c.path, c.startLine) - 1);
-    const end = Math.min(doc.lineCount - 1, this.offsets.adjusted(c.path, c.endLine) - 1);
+    const originalStart = mount.range.start.line + 1;
+    const originalEnd = mount.range.end.line + 1;
+    const start = Math.max(0, this.offsets.adjusted(c.path, originalStart) - 1);
+    const end = Math.min(doc.lineCount - 1, this.offsets.adjusted(c.path, originalEnd) - 1);
     if (end < start) {
       vscode.window.showErrorMessage(t(this.locale, 'ext.comment.applyFailedStale'));
       return;
@@ -168,7 +175,7 @@ export class CommentProvider {
       return;
     }
     await doc.save();
-    this.offsets.record(c.path, c.startLine, doc.lineCount - before);
+    this.offsets.record(c.path, originalStart, doc.lineCount - before);
     await vscode.window.showTextDocument(doc, { selection: new vscode.Range(start, 0, start, 0), preview: false });
     this.setStatus(index, 'applied');
   }
