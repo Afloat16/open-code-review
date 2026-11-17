@@ -1342,23 +1342,26 @@ func resumedFromSession(resume *session.ResumeState) string {
 // confirmed is "" on round 1 (stripped via stripEmptyConfirmedBlock).
 func (a *Agent) buildMainTaskMessages(rule, changeFiles, diffs, planResult, confirmed string) []llm.Message {
 	rawMsgs := a.args.Template.MainTask.Messages
+	// Replace only template tokens; inserted source and guidance are literal data.
+	replacements := strings.NewReplacer(
+		"{{current_system_date_time}}", a.currentDate,
+		"{{system_rule}}", rule,
+		"{{change_files}}", changeFiles,
+		"{{diffs}}", diffs,
+		"{{requirement_background}}", a.args.Background,
+		"{{plan_guidance}}", planResult,
+		"{{confirmed_comments}}", confirmed,
+	)
 	messages := make([]llm.Message, 0, len(rawMsgs))
 	for _, m := range rawMsgs {
 		content := m.Content
-		content = strings.ReplaceAll(content, "{{current_system_date_time}}", a.currentDate)
-		content = strings.ReplaceAll(content, "{{system_rule}}", rule)
-		content = strings.ReplaceAll(content, "{{change_files}}", changeFiles)
-		content = strings.ReplaceAll(content, "{{diffs}}", diffs)
-		content = strings.ReplaceAll(content, "{{requirement_background}}", a.args.Background)
 		if planResult == "" {
 			content = stripEmptyPlanBlock(content)
 		}
-		content = strings.ReplaceAll(content, "{{plan_guidance}}", planResult)
 		if confirmed == "" {
 			content = stripEmptyConfirmedBlock(content)
 		}
-		content = strings.ReplaceAll(content, "{{confirmed_comments}}", confirmed)
-		messages = append(messages, llm.NewTextMessage(m.Role, content))
+		messages = append(messages, llm.NewTextMessage(m.Role, replacements.Replace(content)))
 	}
 	return messages
 }
@@ -1785,16 +1788,17 @@ func (a *Agent) executeGroupPlanPhase(ctx context.Context, g FileGroup, concaten
 	telemetry.SetAttr(span, "group.label", g.Label)
 
 	pt := a.args.Template.PlanTask
+	replacements := strings.NewReplacer(
+		"{{current_system_date_time}}", a.currentDate,
+		"{{system_rule}}", rule,
+		"{{change_files}}", changeFiles,
+		"{{diffs}}", concatenatedDiffs,
+		"{{requirement_background}}", a.args.Background,
+		"{{plan_tools}}", formatToolDefs(a.args.PlanToolDefs),
+	)
 	messages := make([]llm.Message, 0, len(pt.Messages))
 	for _, m := range pt.Messages {
-		content := m.Content
-		content = strings.ReplaceAll(content, "{{current_system_date_time}}", a.currentDate)
-		content = strings.ReplaceAll(content, "{{system_rule}}", rule)
-		content = strings.ReplaceAll(content, "{{change_files}}", changeFiles)
-		content = strings.ReplaceAll(content, "{{diffs}}", concatenatedDiffs)
-		content = strings.ReplaceAll(content, "{{requirement_background}}", a.args.Background)
-		content = strings.ReplaceAll(content, "{{plan_tools}}", formatToolDefs(a.args.PlanToolDefs))
-		messages = append(messages, llm.NewTextMessage(m.Role, content))
+		messages = append(messages, llm.NewTextMessage(m.Role, replacements.Replace(m.Content)))
 	}
 
 	gk := fileGroupKey(g.Diffs)
