@@ -2,7 +2,7 @@
 // Copyright 2026 alibaba/open-code-review Contributors
 
 import { execFile } from 'child_process';
-import { mkdtemp, rm, writeFile } from 'fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import path from 'path';
 import { promisify } from 'util';
@@ -38,6 +38,19 @@ describe('GitService workspace files', () => {
       { path: 'staged.ts', status: 'added' },
       { path: 'untracked.ts', status: 'added' },
     ]);
+  });
+
+  const posixTest = process.platform === 'win32' ? it.skip : it;
+  posixTest.each([' ', '\t', '\n', '\r', '\u00a0'])('preserves repository-root suffix %j', async (suffix) => {
+    const nestedRoot = path.join(repoRoot, 'nested' + suffix);
+    await mkdir(nestedRoot);
+    await execFileAsync('git', ['init', '-q'], { cwd: nestedRoot });
+    await writeFile(path.join(nestedRoot, 'new.ts'), 'export const added = true;\n');
+    (vscode.workspace as any).workspaceFolders = [{ uri: { fsPath: nestedRoot } }];
+
+    const state = await new GitService().getState(ReviewMode.Workspace);
+
+    expect(state.workspaceFiles).toEqual([{ path: 'new.ts', status: 'added' }]);
   });
 
   it('lists merge commit files relative to the first parent', async () => {

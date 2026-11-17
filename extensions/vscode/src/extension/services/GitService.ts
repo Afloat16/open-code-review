@@ -174,7 +174,8 @@ export class GitService {
     if (!ws) return null;
     try {
       const out = await runGit(ws, ['rev-parse', '--show-toplevel']);
-      const root = out.trim();
+      // Git adds one LF; remaining whitespace can be part of the directory name.
+      const root = out.replace(/\n$/, '');
       return root || null;
     } catch {
       return null;

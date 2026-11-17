@@ -183,7 +183,9 @@ func resolveWorkingDir(input string, requireGit bool) (string, bool, error) {
 		// isGit is true. Fail loudly there instead of silently reusing the
 		// subdir, which would reproduce the #287 root-relative-path bug.
 		top, topErr := runGitCmdStdout(absPath, "rev-parse", "--show-toplevel")
-		t := strings.TrimSpace(string(top))
+		// Git terminates this path with one LF; other whitespace belongs to
+		// the directory name and must remain part of the repository root.
+		t := strings.TrimSuffix(string(top), "\n")
 		if topErr != nil || t == "" {
 			return "", false, fmt.Errorf("%s is a git repository without a work tree (bare repo?); cannot resolve its top level for review", absPath)
 		}
