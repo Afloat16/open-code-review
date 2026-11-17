@@ -111,9 +111,9 @@ describe('buildWorkspaceFiles', () => {
     ]);
   });
 
-  it('falls back to staged changes when diff HEAD is empty', () => {
-    const files = buildWorkspaceFiles('', 'M\tsrc/staged.ts', '');
-    expect(files).toEqual([{ path: 'src/staged.ts', status: 'modified' }]);
+  it('merges the empty-tree comparison supplied for an unavailable HEAD', () => {
+    const files = buildWorkspaceFiles('', 'A\tsrc/staged.ts', '');
+    expect(files).toEqual([{ path: 'src/staged.ts', status: 'added' }]);
   });
 
   it('deduplicates paths and prefers tracked changes over untracked files', () => {

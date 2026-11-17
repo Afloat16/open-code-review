@@ -72,12 +72,12 @@ export function mergeWorkspaceFiles(tracked: FileChange[], untrackedPaths: strin
 
 /**
  * Build the workspace file list from git diff and ls-files output.
- * Match OCR CLI workspace mode: use diff HEAD, fall back to staged changes if empty, then merge untracked files.
+ * Use diff HEAD, or the caller's empty-tree comparison when HEAD is unavailable, then merge untracked files.
  */
-export function buildWorkspaceFiles(diffHeadOut: string, diffCachedOut: string, untrackedOut: string): FileChange[] {
+export function buildWorkspaceFiles(diffHeadOut: string, fallbackDiffOut: string, untrackedOut: string): FileChange[] {
   let tracked = parseNameStatus(diffHeadOut);
   if (tracked.length === 0) {
-    tracked = parseNameStatus(diffCachedOut);
+    tracked = parseNameStatus(fallbackDiffOut);
   }
   return mergeWorkspaceFiles(tracked, parseUntrackedList(untrackedOut));
 }

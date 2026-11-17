@@ -152,15 +152,16 @@ export class GitService {
 
     try {
       const [diffHeadOut, untrackedOut] = await Promise.all([
-        // HEAD does not exist before the first commit; fall back to the index below.
-        runGit(root, ['diff', '--name-status', 'HEAD']).catch(() => ''),
+        // HEAD does not exist before the first commit; compare the live tree with an empty tree below.
+        runGit(root, ['diff', '--name-status', 'HEAD', '--']).catch(() => null),
         runGit(root, ['ls-files', '--others', '--exclude-standard']),
       ]);
-      let diffCachedOut = '';
-      if (!diffHeadOut.trim()) {
-        diffCachedOut = await runGit(root, ['diff', '--cached', '--name-status']);
+      let fallbackDiffOut = '';
+      if (diffHeadOut === null) {
+        const emptyTree = (await runGit(root, ['hash-object', '-t', 'tree', '--stdin'])).trim();
+        fallbackDiffOut = await runGit(root, ['diff', '--name-status', emptyTree, '--']);
       }
-      this.cache.workspaceFiles = buildWorkspaceFiles(diffHeadOut, diffCachedOut, untrackedOut);
+      this.cache.workspaceFiles = buildWorkspaceFiles(diffHeadOut ?? '', fallbackDiffOut, untrackedOut);
       this.trace(`refreshWorkspaceFiles: root=${root} files=${this.cache.workspaceFiles.length}`);
     } catch (e) {
       this.trace(`refreshWorkspaceFiles failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -505,7 +506,7 @@ function runGit(cwd: string, args: string[]): Promise<string> {
     execFile('git', ['-c', 'core.quotepath=false', ...args], { cwd, maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
       if (err) reject(err);
       else resolve(stdout);
-    });
+    }).stdin?.end();
   });
 }
 

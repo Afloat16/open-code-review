@@ -40,6 +40,47 @@ describe('GitService workspace files', () => {
     ]);
   });
 
+  it.each([false, true])('omits staged changes canceled by the working tree (untracked=%s)', async (untracked) => {
+    const filename = path.join(repoRoot, 'tracked.ts');
+    await writeFile(filename, 'export const value = 1;\n');
+    await execFileAsync('git', ['add', 'tracked.ts'], { cwd: repoRoot });
+    await execFileAsync('git', ['-c', 'user.name=Test User', '-c', 'user.email=test@example.com', 'commit', '-q', '-m', 'base'], { cwd: repoRoot });
+    await writeFile(filename, 'export const value = 2;\n');
+    await execFileAsync('git', ['add', 'tracked.ts'], { cwd: repoRoot });
+    await writeFile(filename, 'export const value = 1;\n');
+    if (untracked) {
+      await writeFile(path.join(repoRoot, 'new.ts'), 'export const added = true;\n');
+    }
+
+    const state = await new GitService().getState(ReviewMode.Workspace);
+
+    expect(state.workspaceFiles).toEqual(untracked ? [{ path: 'new.ts', status: 'added' }] : []);
+  });
+
+  it('uses the HEAD revision when a file is also named HEAD', async () => {
+    await writeFile(path.join(repoRoot, 'HEAD'), 'before\n');
+    await execFileAsync('git', ['add', 'HEAD'], { cwd: repoRoot });
+    await execFileAsync('git', ['-c', 'user.name=Test User', '-c', 'user.email=test@example.com', 'commit', '-q', '-m', 'base'], { cwd: repoRoot });
+    await writeFile(path.join(repoRoot, 'HEAD'), 'after\n');
+
+    const state = await new GitService().getState(ReviewMode.Workspace);
+
+    expect(state.workspaceFiles).toEqual([{ path: 'HEAD', status: 'modified' }]);
+  });
+
+  it.each(['sha1', 'sha256'])('omits removed staged additions before the first %s commit', async (format) => {
+    await rm(path.join(repoRoot, '.git'), { recursive: true, force: true });
+    await execFileAsync('git', ['init', '-q', '--object-format=' + format], { cwd: repoRoot });
+    await writeFile(path.join(repoRoot, 'removed.ts'), 'export const removed = true;\n');
+    await execFileAsync('git', ['add', 'removed.ts'], { cwd: repoRoot });
+    await rm(path.join(repoRoot, 'removed.ts'));
+    await writeFile(path.join(repoRoot, 'new.ts'), 'export const added = true;\n');
+
+    const state = await new GitService().getState(ReviewMode.Workspace);
+
+    expect(state.workspaceFiles).toEqual([{ path: 'new.ts', status: 'added' }]);
+  });
+
   it('lists merge commit files relative to the first parent', async () => {
     await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: repoRoot });
     await execFileAsync('git', ['config', 'user.name', 'Test User'], { cwd: repoRoot });
