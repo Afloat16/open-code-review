@@ -18,8 +18,9 @@ export class CliService {
   private current: ReturnType<typeof spawn> | null = null;
   private envCache: { env: EnvCheckResult; at: number } | null = null;
   private static readonly ENV_CACHE_TTL_MS = 5 * 60 * 1000;
+  private static readonly PROBE_MAX_BYTES = 64 * 1024;
 
-  constructor(private cliPath: string = 'ocr') {}
+  constructor(private cliPath: string = 'ocr', private probeTimeoutMs = 10000) {}
 
   invalidateEnvironmentCache(): void {
     this.envCache = null;
@@ -42,18 +43,43 @@ export class CliService {
   private probeCommand(bin: string): Promise<{ ok: boolean; version?: string }> {
     return new Promise((resolve) => {
       // shell: true is safe here because args are hardcoded ['--version'] — no user input.
-      const proc = spawn(resolveBin(bin), ['--version'], { env: getShellEnv(), shell: process.platform === 'win32' });
-      let stdout = '';
-      let errored = false;
-      proc.stdout?.on('data', (d) => { stdout += d.toString(); });
-      proc.on('error', () => { errored = true; resolve({ ok: false }); });
-      proc.on('close', (code) => {
-        if (errored || code !== 0) {
-          resolve({ ok: false });
+      const proc = spawn(resolveBin(bin), ['--version'], {
+        env: getShellEnv(), shell: process.platform === 'win32', detached: process.platform !== 'win32',
+      });
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      let settled = false;
+      const finish = (result: { ok: boolean; version?: string }) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(result);
+      };
+      const timer = setTimeout(() => {
+        finish({ ok: false });
+        this.forceKillTree(proc);
+      }, this.probeTimeoutMs);
+      proc.stderr?.resume();
+      proc.stdout?.on('data', (data: Buffer | string) => {
+        if (settled) return;
+        const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+        bytes += chunk.length;
+        if (bytes > CliService.PROBE_MAX_BYTES) {
+          finish({ ok: false });
+          this.forceKillTree(proc);
           return;
         }
-        const version = stdout.trim().split('\n')[0]?.trim();
-        resolve({ ok: true, version: version || undefined });
+        chunks.push(chunk);
+      });
+      proc.on('error', () => finish({ ok: false }));
+      proc.on('close', (code) => {
+        if (settled) return;
+        if (code !== 0) {
+          finish({ ok: false });
+          return;
+        }
+        const version = Buffer.concat(chunks).toString('utf8').trim().split('\n')[0]?.trim();
+        finish({ ok: true, version: version || undefined });
       });
     });
   }
@@ -187,30 +213,39 @@ export class CliService {
       // kill('SIGTERM') to TerminateProcess, which kills only the launcher and
       // can orphan its native child. taskkill /T terminates the complete tree.
       if (process.platform === 'win32') {
-        const treeKill = spawn('taskkill', ['/pid', String(proc.pid), '/t', '/f'], {
-          stdio: 'ignore',
-          windowsHide: true,
-        });
-        const fallback = () => {
-          if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL');
-        };
-        treeKill.once('error', fallback);
-        treeKill.once('close', (code) => {
-          if (code !== 0) fallback();
-        });
+        this.forceKillTree(proc);
         return;
       }
 
       proc.kill('SIGTERM');
-      const forceKillTimer = setTimeout(() => {
-        if (proc.exitCode !== null || proc.signalCode !== null) return;
-        try {
-          process.kill(-proc.pid!, 'SIGKILL');
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException).code !== 'ESRCH') proc.kill('SIGKILL');
-        }
-      }, 3000);
+      const forceKillTimer = setTimeout(() => this.forceKillTree(proc), 3000);
       proc.once('close', () => clearTimeout(forceKillTimer));
+    }
+  }
+
+  private forceKillTree(proc: ReturnType<typeof spawn>): void {
+    if (!proc.pid) return;
+    if (process.platform === 'win32') {
+      if (proc.exitCode !== null || proc.signalCode !== null) return;
+      const treeKill = spawn('taskkill', ['/pid', String(proc.pid), '/t', '/f'], {
+        stdio: 'ignore', windowsHide: true,
+      });
+      const fallback = () => {
+        if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL');
+      };
+      treeKill.once('error', fallback);
+      treeKill.once('close', (code) => {
+        if (code !== 0) fallback();
+      });
+      return;
+    }
+    try {
+      // Descendants may keep probe pipes open after their launcher exits.
+      process.kill(-proc.pid, 'SIGKILL');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ESRCH' && proc.exitCode === null && proc.signalCode === null) {
+        proc.kill('SIGKILL');
+      }
     }
   }
 }
