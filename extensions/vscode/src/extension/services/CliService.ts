@@ -4,6 +4,7 @@
 import { t, resolveLocale } from '@shared/i18n';
 import * as vscode from 'vscode';
 import { spawn } from 'child_process';
+import { createInterface } from 'readline';
 import { CliResult, CliRunOptions, EnvCheckResult, LogLine } from '@shared/types';
 import { buildReviewArgs, extractCliError, parseCliResult, parseLogLine } from './cliParse';
 import { getShellEnv, resolveBin } from './shellEnv';
@@ -86,22 +87,14 @@ export class CliService {
         env: { ...getShellEnv(), npm_config_progress: 'false', npm_config_color: 'false' },
         shell: process.platform === 'win32',
       });
-      // Normalize npm line endings and emit complete lines, buffering partial lines across chunks.
-      const emitLines = (() => {
-        let buf = '';
-        return (chunk: string, level: LogLine['level'], flush = false) => {
-          buf += chunk.replace(/\r/g, '\n');
-          const parts = buf.split('\n');
-          buf = flush ? '' : (parts.pop() ?? '');
-          for (const line of parts) if (line.trim()) onLog({ text: line, level });
-          if (flush && chunk.trim() && parts.length === 0) onLog({ text: chunk, level });
-        };
-      })();
-      proc.stdout?.on('data', (d) => emitLines(d.toString(), 'info'));
-      proc.stderr?.on('data', (d) => emitLines(d.toString(), 'info'));
+      for (const stream of [proc.stdout, proc.stderr]) {
+        if (!stream) continue;
+        createInterface({ input: stream, crlfDelay: Infinity }).on('line', (line) => {
+          if (line.trim()) onLog({ text: line, level: 'info' });
+        });
+      }
       proc.on('error', (err) => { onLog({ text: String(err), level: 'error' }); resolve(false); });
       proc.on('close', (code) => {
-        emitLines('', 'info', true);
         const locale = resolveLocale(vscode.env.language);
         onLog({ text: code === 0 ? t(locale, 'ext.cli.installOk') : `${t(locale, 'ext.cli.installFail')}${code})`, level: code === 0 ? 'info' : 'error' });
         if (code === 0) this.invalidateEnvironmentCache();
@@ -128,14 +121,13 @@ export class CliService {
       this.current = proc;
       let stdout = '';
       let stderr = '';
-      proc.stdout.on('data', (d) => { stdout += d.toString(); });
-      proc.stderr.on('data', (d) => {
-        const text = d.toString();
-        stderr += text;
-        for (const line of text.split('\n')) {
-          const parsed = parseLogLine(line);
-          if (parsed) onLog(parsed);
-        }
+      proc.stdout.setEncoding('utf8');
+      proc.stderr.setEncoding('utf8');
+      proc.stdout.on('data', (text: string) => { stdout += text; });
+      proc.stderr.on('data', (text: string) => { stderr += text; });
+      createInterface({ input: proc.stderr, crlfDelay: Infinity }).on('line', (line) => {
+        const parsed = parseLogLine(line);
+        if (parsed) onLog(parsed);
       });
       proc.on('error', (err) => { this.current = null; reject(err); });
       proc.on('close', (code) => {
