@@ -25,6 +25,8 @@ export class CommentProvider {
   private offsets = new LineOffsetTracker();
   private syncListeners: Array<(s: CommentSyncState[]) => void> = [];
   private reviewContext: ReviewContext = { mode: ReviewMode.Workspace };
+  private applying = new Set<ReviewComment>();
+  private reviewGeneration = 0;
 
   private locale: SupportedLocale;
 
@@ -144,33 +146,41 @@ export class CommentProvider {
       return;
     }
     const c = this.comments[index];
-    if (!c) return;
+    if (!c || this.status.get(index) !== 'pending' || this.applying.has(c)) return;
     const root = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
     if (!root) return;
-    const uri = vscode.Uri.file(`${root}/${c.path}`);
-    const doc = await vscode.workspace.openTextDocument(uri);
-    const before = doc.lineCount;
-    const start = Math.max(0, this.offsets.adjusted(c.path, c.startLine) - 1);
-    const end = Math.min(doc.lineCount - 1, this.offsets.adjusted(c.path, c.endLine) - 1);
-    if (end < start) {
-      vscode.window.showErrorMessage(t(this.locale, 'ext.comment.applyFailedStale'));
-      return;
-    }
-    const range = new vscode.Range(start, 0, end, doc.lineAt(end).text.length);
-    const hasSuggestion = !!(c.suggestionCode && c.suggestionCode.trim());
+    const generation = this.reviewGeneration;
+    this.applying.add(c);
+    try {
+      const uri = vscode.Uri.file(`${root}/${c.path}`);
+      const doc = await vscode.workspace.openTextDocument(uri);
+      if (generation !== this.reviewGeneration || this.status.get(index) !== 'pending') return;
+      const before = doc.lineCount;
+      const start = Math.max(0, this.offsets.adjusted(c.path, c.startLine) - 1);
+      const end = Math.min(doc.lineCount - 1, this.offsets.adjusted(c.path, c.endLine) - 1);
+      if (end < start) {
+        vscode.window.showErrorMessage(t(this.locale, 'ext.comment.applyFailedStale'));
+        return;
+      }
+      const range = new vscode.Range(start, 0, end, doc.lineAt(end).text.length);
+      const hasSuggestion = !!(c.suggestionCode && c.suggestionCode.trim());
 
-    const edit = new vscode.WorkspaceEdit();
-    if (hasSuggestion) edit.replace(uri, range, c.suggestionCode!);
-    else edit.delete(uri, range);
-    const ok = await vscode.workspace.applyEdit(edit);
-    if (!ok) {
-      vscode.window.showErrorMessage(t(this.locale, 'ext.comment.applyFailedLocked'));
-      return;
+      const edit = new vscode.WorkspaceEdit();
+      if (hasSuggestion) edit.replace(uri, range, c.suggestionCode!);
+      else edit.delete(uri, range);
+      const ok = await vscode.workspace.applyEdit(edit);
+      if (!ok) {
+        vscode.window.showErrorMessage(t(this.locale, 'ext.comment.applyFailedLocked'));
+        return;
+      }
+      if (generation !== this.reviewGeneration) return;
+      this.offsets.record(c.path, c.startLine, doc.lineCount - before);
+      this.setStatus(index, 'applied');
+      await doc.save();
+      await vscode.window.showTextDocument(doc, { selection: new vscode.Range(start, 0, start, 0), preview: false });
+    } finally {
+      this.applying.delete(c);
     }
-    await doc.save();
-    this.offsets.record(c.path, c.startLine, doc.lineCount - before);
-    await vscode.window.showTextDocument(doc, { selection: new vscode.Range(start, 0, start, 0), preview: false });
-    this.setStatus(index, 'applied');
   }
 
   discard(index: number): void { this.setStatus(index, 'discarded'); }
@@ -312,6 +322,7 @@ export class CommentProvider {
   }
 
   clear(): void {
+    this.reviewGeneration++;
     this.threads.forEach((th) => th.dispose());
     this.threads.clear();
     this.mounts.clear();
