@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 alibaba/open-code-review Contributors
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { ConfigEntry } from '@shared/configUtils';
@@ -44,7 +44,8 @@ export class ConfigService {
       || raw.model
       || (raw.providers && Object.keys(raw.providers).length > 0)
       || (raw.custom_providers && Object.keys(raw.custom_providers).length > 0)
-      || (raw.llm && Object.keys(raw.llm).length > 0),
+      || (raw.llm && Object.keys(raw.llm).length > 0)
+      || Object.keys(raw).some((key) => !['provider', 'model', 'providers', 'custom_providers', 'llm'].includes(key)),
     );
     if (!hasContent) {
       if (existsSync(p)) unlinkSync(p);
@@ -52,7 +53,14 @@ export class ConfigService {
     }
     const dir = dirname(p);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o755 });
-    writeFileSync(p, JSON.stringify(raw, null, 2), { encoding: 'utf8', mode: 0o600 });
+    const temporary = mkdtempSync(join(dir, '.config-'));
+    try {
+      const replacement = join(temporary, 'config.json');
+      writeFileSync(replacement, JSON.stringify(raw, null, 2), { encoding: 'utf8', mode: 0o600 });
+      renameSync(replacement, p);
+    } finally {
+      rmSync(temporary, { recursive: true, force: true });
+    }
     return this.read();
   }
 
