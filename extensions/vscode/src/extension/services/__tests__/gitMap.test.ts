@@ -81,7 +81,7 @@ describe('parseNameStatus', () => {
 
   it('uses the new path from an R<score> old new rename line', () => {
     expect(parseNameStatus('R100\told/x.ts\tnew/x.ts')).toEqual([
-      { path: 'new/x.ts', status: 'renamed' },
+      { path: 'new/x.ts', status: 'renamed', oldPath: 'old/x.ts' },
     ]);
   });
 

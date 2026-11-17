@@ -4,6 +4,8 @@
 import { FileChange } from '@shared/types';
 import path from 'path';
 
+export type GitFileChange = FileChange & { oldPath?: string };
+
 export function mapStatusCode(code: string): FileChange['status'] {
   switch (code) {
     case 'A': return 'added';
@@ -158,8 +160,8 @@ export function unquoteGitPath(path: string): string {
  * Parse `git diff --name-status` or `git show --name-status` output.
  * Lines are tab-separated: status<TAB>path, or R<score><TAB>old<TAB>new for renames (use new).
  */
-export function parseNameStatus(output: string): FileChange[] {
-  const files: FileChange[] = [];
+export function parseNameStatus(output: string): GitFileChange[] {
+  const files: GitFileChange[] = [];
   const seen = new Set<string>();
   for (const rawLine of output.split('\n')) {
     if (!rawLine.trim()) continue;
@@ -169,7 +171,9 @@ export function parseNameStatus(output: string): FileChange[] {
     const path = unquoteGitPath(parts.length >= 3 ? parts[parts.length - 1] : parts[1]);
     if (seen.has(path)) continue;
     seen.add(path);
-    files.push({ path, status: mapStatusCode(codeChar) });
+    const file: GitFileChange = { path, status: mapStatusCode(codeChar) };
+    if (codeChar === 'R' && parts.length >= 3) file.oldPath = unquoteGitPath(parts[1]);
+    files.push(file);
   }
   return files;
 }

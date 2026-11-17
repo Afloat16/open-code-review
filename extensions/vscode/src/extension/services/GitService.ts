@@ -286,7 +286,9 @@ export class GitService {
 
     if (opts.mode === ReviewMode.Workspace) {
       const emptyRef = '';
-      const left = api.toGitUri(fileUri, opts.status === 'added' ? emptyRef : 'HEAD');
+      const oldPath = await this.originalPathForDiff(root, opts.path, opts.status, 'HEAD', null);
+      const leftUri = vscode.Uri.file(root + '/' + oldPath);
+      const left = api.toGitUri(leftUri, opts.status === 'added' ? emptyRef : 'HEAD');
       const right = opts.status === 'deleted' ? api.toGitUri(fileUri, emptyRef) : fileUri;
       const label = t(resolveLocale(vscode.env.language), 'ext.git.workspaceVsHead');
       await this.presentDiff(left, right, `${opts.path} (${label})`);
@@ -329,11 +331,32 @@ export class GitService {
     title: string,
     opts: { fallbackRange: string },
   ): Promise<void> {
-    const left = await this.resolveDiffSide(api, root, relPath, leftRef, status, 'left');
+    const oldPath = await this.originalPathForDiff(root, relPath, status, leftRef, rightRef);
+    const left = await this.resolveDiffSide(api, root, oldPath, leftRef, status, 'left');
     const right = await this.resolveDiffSide(api, root, relPath, rightRef, status, 'right');
     const opened = await this.presentDiff(left, right, title);
     if (!opened) {
-      await this.presentPatchDiff(root, opts.fallbackRange, relPath, title);
+      await this.presentPatchDiff(root, opts.fallbackRange, [...new Set([oldPath, relPath])], title);
+    }
+  }
+
+  private async originalPathForDiff(
+    root: string,
+    relPath: string,
+    status: FileChange['status'],
+    leftRef: string | null,
+    rightRef: string | null,
+  ): Promise<string> {
+    if (status !== 'renamed' || !leftRef) return relPath;
+    try {
+      const args = ['diff', '--name-status', '--find-renames', '--end-of-options', leftRef];
+      if (rightRef) args.push(rightRef);
+      args.push('--');
+      const files = parseNameStatus(await runGit(root, args));
+      return files.find((file) => file.path === relPath)?.oldPath ?? relPath;
+    } catch (e) {
+      this.trace('rename source lookup failed: ' + String(e));
+      return relPath;
     }
   }
 
@@ -374,12 +397,12 @@ export class GitService {
   private async presentPatchDiff(
     root: string,
     range: string,
-    relPath: string,
+    relPaths: string[],
     title: string,
   ): Promise<void> {
     let patch = '';
     try {
-      patch = await runGit(root, ['diff', range, '--', relPath]);
+      patch = await runGit(root, ['diff', range, '--', ...relPaths]);
     } catch (e) {
       this.trace(`presentPatchDiff failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -457,6 +480,7 @@ export class GitService {
     mountSide: 'left' | 'right';
     leftRef: string | null;
     rightRef: string | null;
+    leftPath: string;
   } | null> {
     const api = await this.ensureApi();
     const root = await this.repoRoot();
@@ -469,9 +493,10 @@ export class GitService {
       const rightRef = status === 'deleted' ? null : ctx.commit;
       const mountRef = status === 'deleted' ? parent : ctx.commit;
       const mountSide: 'left' | 'right' = status === 'deleted' ? 'left' : 'right';
-      const left = await this.resolveDiffSide(api, root, relPath, leftRef, status, 'left');
+      const leftPath = await this.originalPathForDiff(root, relPath, status, leftRef, rightRef);
+      const left = await this.resolveDiffSide(api, root, leftPath, leftRef, status, 'left');
       const right = await this.resolveDiffSide(api, root, relPath, rightRef, status, 'right');
-      return { left, right, title: `${relPath} (${label})`, mountRef, mountSide, leftRef, rightRef };
+      return { left, right, title: `${relPath} (${label})`, mountRef, mountSide, leftRef, rightRef, leftPath };
     }
 
     if (ctx.mode === ReviewMode.Branch && ctx.from && ctx.to) {
@@ -484,9 +509,10 @@ export class GitService {
       const rightRef = status === 'deleted' ? null : resolvedTo;
       const mountRef = status === 'deleted' ? base : resolvedTo;
       const mountSide: 'left' | 'right' = status === 'deleted' ? 'left' : 'right';
-      const left = await this.resolveDiffSide(api, root, relPath, leftRef, status, 'left');
+      const leftPath = await this.originalPathForDiff(root, relPath, status, leftRef, rightRef);
+      const left = await this.resolveDiffSide(api, root, leftPath, leftRef, status, 'left');
       const right = await this.resolveDiffSide(api, root, relPath, rightRef, status, 'right');
-      return { left, right, title: `${relPath} (${label})`, mountRef, mountSide, leftRef, rightRef };
+      return { left, right, title: `${relPath} (${label})`, mountRef, mountSide, leftRef, rightRef, leftPath };
     }
 
     return null;

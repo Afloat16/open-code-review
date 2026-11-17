@@ -48,6 +48,7 @@ export interface CommentAnchorDeps {
     mountSide: 'left' | 'right';
     leftRef: string | null;
     rightRef: string | null;
+    leftPath?: string;
   } | null>;
   toGitUri: (path: string, ref: string) => Promise<vscode.Uri>;
 }
@@ -162,12 +163,14 @@ export async function resolveCommentAnchor(
 
   let mountRef = primaryRef;
   let mountSide = diff.mountSide;
+  let mountPath = diff.mountSide === 'left' ? diff.leftPath ?? comment.path : comment.path;
 
   if (!lines && effectiveStatus !== 'added') {
     const altRef = diff.mountSide === 'right' ? diff.leftRef : diff.rightRef;
     const altSide: CommentMountSide = diff.mountSide === 'right' ? 'left' : 'right';
     if (altRef) {
-      const altContent = await deps.readAtRef(altRef, comment.path);
+      const altPath = altSide === 'left' ? diff.leftPath ?? comment.path : comment.path;
+      const altContent = await deps.readAtRef(altRef, altPath);
       const altLines = altContent
         ? resolveLinesInContent(altContent, comment.startLine, comment.endLine, comment.existingCode)
         : null;
@@ -175,13 +178,14 @@ export async function resolveCommentAnchor(
         lines = altLines;
         mountRef = altRef;
         mountSide = altSide;
+        mountPath = altPath;
       }
     }
   }
 
   if (!lines) return { kind: 'sidebar', reason: 'unresolved' };
 
-  const uri = await deps.toGitUri(comment.path, mountRef);
+  const uri = await deps.toGitUri(mountPath, mountRef);
   return {
     kind: 'mountable',
     uri,
