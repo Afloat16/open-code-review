@@ -299,9 +299,16 @@ export class CommentProvider {
     if (a.toString() === b.toString()) return true;
     if (a.scheme !== b.scheme) return false;
     if (a.scheme === 'git') {
-      const refA = new URLSearchParams(a.query).get('ref');
-      const refB = new URLSearchParams(b.query).get('ref');
-      return a.path === b.path && refA === refB;
+      try {
+        const paramsA = JSON.parse(a.query);
+        const paramsB = JSON.parse(b.query);
+        return a.authority === b.authority && a.path === b.path
+          && typeof paramsA.path === 'string' && paramsA.path === paramsB.path
+          && typeof paramsA.ref === 'string' && paramsA.ref === paramsB.ref
+          && paramsA.submoduleOf === paramsB.submoduleOf;
+      } catch {
+        return false;
+      }
     }
     return a.fsPath === b.fsPath;
   }
