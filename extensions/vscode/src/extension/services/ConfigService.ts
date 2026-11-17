@@ -76,9 +76,9 @@ export class ConfigService {
     const testHome = mkdtempSync(join(tmpdir(), 'ocr-test-home-'));
     const configDir = join(testHome, '.opencodereview');
     const configPath = join(configDir, 'config.json');
-    mkdirSync(configDir, { recursive: true, mode: 0o700 });
-    writeFileSync(configPath, JSON.stringify(draft, null, 2), { encoding: 'utf8', mode: 0o600 });
     try {
+      mkdirSync(configDir, { recursive: true, mode: 0o700 });
+      writeFileSync(configPath, JSON.stringify(draft, null, 2), { encoding: 'utf8', mode: 0o600 });
       return await this.cli.testConnection({ home: testHome });
     } finally {
       if (existsSync(testHome)) rmSync(testHome, { recursive: true, force: true });
