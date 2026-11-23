@@ -4,16 +4,18 @@
 package reviewtask
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
+
 	"github.com/alibaba/open-code-review/internal/diff"
 	"github.com/alibaba/open-code-review/internal/llm"
 	"github.com/alibaba/open-code-review/internal/model"
 	"github.com/alibaba/open-code-review/internal/session"
 	"github.com/alibaba/open-code-review/internal/telemetry"
 	"github.com/alibaba/open-code-review/internal/tool"
-	"time"
 )
 
 // executeToolCall dispatches a single tool call from the LLM response and
@@ -59,7 +61,7 @@ func (r *Runner) executeToolCall(ctx context.Context, taskKey string, call llm.T
 	toolCallNumber := r.RecordToolCall(toolName)
 	callStarted := time.Now()
 
-	args, err := parseToolArgs(call.Function.Arguments)
+	args, err := parseToolArgsWithPrecision(call.Function.Arguments, !tool.IsReserved(toolName))
 	if err != nil {
 		errMsg := fmt.Sprintf("Error parsing tool arguments for %s: %v", toolName, err)
 		telemetry.PrintToolCallStarted(toolName, nil)
@@ -236,15 +238,38 @@ func (r *Runner) executeToolCall(ctx context.Context, taskKey string, call llm.T
 // unbounded. A raw string with no balanced value at all still fails with its
 // original error, unchanged from before.
 func parseToolArgs(raw string) (map[string]any, error) {
-	var args map[string]any
-	err := json.Unmarshal([]byte(raw), &args)
+	return parseToolArgsWithPrecision(raw, false)
+}
+
+type exactToolArgs map[string]any
+
+func (args *exactToolArgs) UnmarshalJSON(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	return decoder.Decode((*map[string]any)(args))
+}
+
+func parseToolArgsWithPrecision(raw string, preserveNumbers bool) (map[string]any, error) {
+	decode := func(data string) (map[string]any, error) {
+		var args map[string]any
+		var err error
+		if preserveNumbers {
+			// Dynamic tools may use IDs or decimals that float64 cannot represent.
+			// Unmarshal validates the full input before invoking the decoder.
+			err = json.Unmarshal([]byte(data), (*exactToolArgs)(&args))
+		} else {
+			err = json.Unmarshal([]byte(data), &args)
+		}
+		return args, err
+	}
+	args, err := decode(raw)
 	if err != nil {
 		span, ok := extractTopLevelJSON(raw)
 		if !ok {
 			return nil, err
 		}
-		var spanArgs map[string]any
-		if spanErr := json.Unmarshal([]byte(span), &spanArgs); spanErr != nil {
+		spanArgs, spanErr := decode(span)
+		if spanErr != nil {
 			return nil, err
 		}
 		args = spanArgs
