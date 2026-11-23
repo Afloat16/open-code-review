@@ -113,6 +113,7 @@ func (p *Provider) Enumerate(ctx context.Context) ([]model.ScanItem, error) {
 	gitignorePatterns := diff.LoadGitignorePatterns(p.repoDir)
 
 	var out []model.ScanItem
+	var sniffBuffer *[binarySniffWindow]byte
 	for _, rel := range files {
 		// Per-iteration cancellation check: a large repo with thousands of
 		// files may take seconds to walk, and downstream Lstat / ReadFile
@@ -140,7 +141,10 @@ func (p *Provider) Enumerate(ctx context.Context) ([]model.ScanItem, error) {
 				rel, info.Size(), p.maxFileSizeBytes)
 			continue
 		}
-		binary, err := isBinaryFile(full)
+		if sniffBuffer == nil {
+			sniffBuffer = new([binarySniffWindow]byte)
+		}
+		binary, err := isBinaryFile(full, sniffBuffer)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[ocr] WARNING: cannot sniff %s: %v\n", rel, err)
 			continue
@@ -445,14 +449,13 @@ func countLines(content []byte) int {
 
 // isBinaryFile reads up to binarySniffWindow bytes from path and reports
 // whether they contain a NUL byte (git's "binary" heuristic).
-func isBinaryFile(path string) (bool, error) {
+func isBinaryFile(path string, buf *[binarySniffWindow]byte) (bool, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return false, err
 	}
 	defer f.Close()
-	buf := make([]byte, binarySniffWindow)
-	n, err := io.ReadFull(f, buf)
+	n, err := io.ReadFull(f, buf[:])
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return false, err
 	}

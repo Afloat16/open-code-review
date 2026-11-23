@@ -97,6 +97,7 @@ func TestProvider_Enumerate_SniffError(t *testing.T) {
 // TestIsBinaryFile covers detection plus the open-error branch.
 func TestIsBinaryFile(t *testing.T) {
 	dir := t.TempDir()
+	buf := new([binarySniffWindow]byte)
 	text := filepath.Join(dir, "text.txt")
 	if err := os.WriteFile(text, []byte("hello world\n"), 0o644); err != nil {
 		t.Fatalf("write text: %v", err)
@@ -111,25 +112,25 @@ func TestIsBinaryFile(t *testing.T) {
 	}
 
 	t.Run("text is not binary", func(t *testing.T) {
-		b, err := isBinaryFile(text)
+		b, err := isBinaryFile(text, buf)
 		if err != nil || b {
 			t.Errorf("isBinaryFile(text) = %v, %v; want false, nil", b, err)
 		}
 	})
 	t.Run("NUL byte is binary", func(t *testing.T) {
-		b, err := isBinaryFile(bin)
+		b, err := isBinaryFile(bin, buf)
 		if err != nil || !b {
 			t.Errorf("isBinaryFile(bin) = %v, %v; want true, nil", b, err)
 		}
 	})
 	t.Run("empty is not binary", func(t *testing.T) {
-		b, err := isBinaryFile(empty)
+		b, err := isBinaryFile(empty, buf)
 		if err != nil || b {
 			t.Errorf("isBinaryFile(empty) = %v, %v; want false, nil", b, err)
 		}
 	})
 	t.Run("missing file errors", func(t *testing.T) {
-		if _, err := isBinaryFile(filepath.Join(dir, "nope")); err == nil {
+		if _, err := isBinaryFile(filepath.Join(dir, "nope"), buf); err == nil {
 			t.Error("expected error for missing file")
 		}
 	})
