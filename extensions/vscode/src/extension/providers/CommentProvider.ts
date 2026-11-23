@@ -14,6 +14,16 @@ import {
   SidebarOnlyReason,
 } from './commentAnchor';
 
+function findUniqueSourceLines(content: string, source: string): { start: number; end: number } | null {
+  const text = `\n${content.replace(/\r\n/g, '\n')}\n`;
+  const needle = `\n${source}\n`;
+  const match = text.indexOf(needle);
+  if (match < 0 || text.indexOf(needle, match + 1) >= 0) return null;
+  let start = 0;
+  for (let i = 0; i < match; i++) if (text[i] === '\n') start++;
+  return { start, end: start + source.split('\n').length - 1 };
+}
+
 export class CommentProvider {
   private controller: vscode.CommentController;
   private threads = new Map<number, vscode.CommentThread>();
@@ -150,13 +160,26 @@ export class CommentProvider {
     const uri = vscode.Uri.file(`${root}/${c.path}`);
     const doc = await vscode.workspace.openTextDocument(uri);
     const before = doc.lineCount;
-    const start = Math.max(0, this.offsets.adjusted(c.path, c.startLine) - 1);
-    const end = Math.min(doc.lineCount - 1, this.offsets.adjusted(c.path, c.endLine) - 1);
-    if (end < start) {
+    const source = c.existingCode?.replace(/\r\n/g, '\n').replace(/\n$/, '');
+    if (!source?.trim()) {
       vscode.window.showErrorMessage(t(this.locale, 'ext.comment.applyFailedStale'));
       return;
     }
-    const range = new vscode.Range(start, 0, end, doc.lineAt(end).text.length);
+    let start = this.offsets.adjusted(c.path, c.startLine) - 1;
+    let end = this.offsets.adjusted(c.path, c.endLine) - 1;
+    let range = start >= 0 && end >= start && end < doc.lineCount
+      ? new vscode.Range(start, 0, end, doc.lineAt(end).text.length)
+      : undefined;
+    // Navigation can tolerate approximate snippets; replacing source must match the current document exactly.
+    if (!range || doc.getText(range).replace(/\r\n/g, '\n') !== source) {
+      const relocated = findUniqueSourceLines(doc.getText(), source);
+      if (!relocated) {
+        vscode.window.showErrorMessage(t(this.locale, 'ext.comment.applyFailedStale'));
+        return;
+      }
+      ({ start, end } = relocated);
+      range = new vscode.Range(start, 0, end, doc.lineAt(end).text.length);
+    }
     const hasSuggestion = !!(c.suggestionCode && c.suggestionCode.trim());
 
     const edit = new vscode.WorkspaceEdit();
@@ -168,7 +191,7 @@ export class CommentProvider {
       return;
     }
     await doc.save();
-    this.offsets.record(c.path, c.startLine, doc.lineCount - before);
+    if (c.startLine > 0) this.offsets.record(c.path, c.startLine, doc.lineCount - before);
     await vscode.window.showTextDocument(doc, { selection: new vscode.Range(start, 0, start, 0), preview: false });
     this.setStatus(index, 'applied');
   }
