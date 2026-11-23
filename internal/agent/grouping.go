@@ -123,10 +123,8 @@ func groupWithoutLLM(ctx context.Context, diffs []model.Diff, strategy template.
 		// A known cost of bundling: the --max-tokens-budget look-ahead in
 		// dispatchSubtasks is per group, so a bundle makes it all-or-nothing over
 		// the whole change set — a rejected bundle covers no file at all, where
-		// per-file groups would have covered as many as the budget allowed. It
-		// also over-charges the bundle: that estimate sums estimateDiffFileTokens,
-		// which pays the fixed prompt overhead once per file, while a bundle's
-		// files share one conversation.
+		// per-file groups would have covered as many as the budget allowed. The
+		// estimate charges the shared conversation's fixed overhead once.
 		groups = enforceMaxFilesPerGroup([]FileGroup{{Label: smallChangeSetLabel, Diffs: diffs}})
 		groups = enforceGroupTokenBudget(groups, tokenLimit)
 	}

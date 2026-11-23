@@ -49,14 +49,27 @@ type Estimate struct {
 // single diff (PLAN + MAIN_TASK rounds). It mirrors scan.estimateFileTokens
 // but counts tokens of the diff text (d.Diff) rather than whole-file content,
 // since the diff path reviews patches, not full files. Returns 0 for deleted
-// files (they are skipped before dispatch and must not trip the gate). Used
-// both by the aggregate estimate (estimateDiffCost) and by the per-group budget
-// look-ahead in dispatchSubtasks, which sums this over a group's diffs.
+// files (they are skipped before dispatch and must not trip the gate).
 func estimateDiffFileTokens(d model.Diff) int64 {
-	if d.IsDeleted || d.Diff == "" {
+	return estimateDiffGroupTokens([]model.Diff{d})
+}
+
+// estimateDiffGroupTokens projects the cost of one shared PLAN + MAIN_TASK
+// conversation. Every diff contributes content, but prompt scaffolding and
+// completion allowances belong to the conversation, not to each of its files.
+func estimateDiffGroupTokens(diffs []model.Diff) int64 {
+	var diffTokens int64
+	hasContent := false
+	for _, d := range diffs {
+		if d.IsDeleted || d.Diff == "" {
+			continue
+		}
+		hasContent = true
+		diffTokens += int64(llm.CountTokens(d.Diff))
+	}
+	if !hasContent {
 		return 0
 	}
-	diffTokens := int64(llm.CountTokens(d.Diff))
 
 	// PLAN phase input/output (small JSON output).
 	total := diffTokens + promptOverheadTokens

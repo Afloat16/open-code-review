@@ -693,10 +693,7 @@ dispatchLoop:
 		// count (≤ concurrency).
 		if a.args.MaxTokensBudget > 0 {
 			used := a.runner.TotalTokensUsed()
-			var groupEst int64
-			for _, d := range group.Diffs {
-				groupEst += estimateDiffFileTokens(d)
-			}
+			groupEst := estimateDiffGroupTokens(group.Diffs)
 			projected := used + groupEst
 			if projected > a.args.MaxTokensBudget {
 				firstPath := group.Diffs[0].NewPath
