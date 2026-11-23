@@ -55,6 +55,16 @@ type Runner struct {
 }
 
 func NewRunner(ctx context.Context, deps Deps, input Input) (*Runner, error) {
+	return newRunner(ctx, deps, input, false)
+}
+
+// PrepareRunner loads the comparison patches and constructs a runner from the
+// same authorized trees, without retaining prepared state on the caller's Input.
+func PrepareRunner(ctx context.Context, deps Deps, input Input) (*Runner, error) {
+	return newRunner(ctx, deps, input, true)
+}
+
+func newRunner(ctx context.Context, deps Deps, input Input, prepare bool) (*Runner, error) {
 	if deps.LLMClient == nil || deps.Model == "" || (deps.Artifacts == nil && deps.ArtifactDir == "") || deps.MaxTokensBudget < 0 {
 		return nil, fmt.Errorf("behavior requires a client, model, fresh artifact directory, and nonnegative token budget")
 	}
@@ -91,7 +101,15 @@ func NewRunner(ctx context.Context, deps Deps, input Input) (*Runner, error) {
 	deps.Template.MemoryCompressionTask.Messages = slices.Clone(templateCopy.MemoryCompressionTask.Messages)
 	deps.Template.FinalRound.Messages = slices.Clone(templateCopy.FinalRound.Messages)
 	deps.Template.ApplyLanguage(deps.Language)
-	code, err := prepareCodeTools(ctx, input)
+	var code *codeTools
+	if prepare {
+		input, code, err = prepareInput(ctx, input)
+		if err == nil {
+			err = code.bindDiffs(input.Diffs)
+		}
+	} else {
+		code, err = prepareCodeTools(ctx, input)
+	}
 	if err != nil {
 		return nil, err
 	}

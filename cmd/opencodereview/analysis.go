@@ -131,10 +131,6 @@ func (execution *analysisExecution) prepare(ctx context.Context, request analysi
 	if err := execution.artifacts.Save(execution.fallback, "started"); err != nil {
 		return err
 	}
-	input, err = behaviortask.PrepareInput(ctx, input)
-	if err != nil {
-		return err
-	}
 	tpl, err := template.LoadBehaviorDefault()
 	if err != nil {
 		return err
@@ -146,7 +142,7 @@ func (execution *analysisExecution) prepare(ctx context.Context, request analysi
 		raw = llm.NewRawHolder()
 	}
 	client := llm.NewLLMClient(request.endpoint, execution.collector, raw)
-	execution.runner, err = behaviortask.NewRunner(ctx, behaviortask.Deps{LLMClient: client, Model: request.model, Language: request.language,
+	execution.runner, err = behaviortask.PrepareRunner(ctx, behaviortask.Deps{LLMClient: client, Model: request.model, Language: request.language,
 		Template: tpl, Artifacts: execution.artifacts, ReportID: request.reviewID, MaxTokensBudget: request.budget,
 		NewRequestMeta: func(key string, taskType session.TaskType, requestNo int) llm.RequestMeta {
 			return llm.RequestMeta{Provider: request.provider, Model: request.model, FilePath: key, TaskType: string(taskType), RequestNo: requestNo}

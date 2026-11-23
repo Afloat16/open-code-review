@@ -15,10 +15,15 @@ import (
 )
 
 func PrepareInput(ctx context.Context, input Input) (Input, error) {
+	input, _, err := prepareInput(ctx, input)
+	return input, err
+}
+
+func prepareInput(ctx context.Context, input Input) (Input, *codeTools, error) {
 	input.Diffs = nil
 	code, err := prepareCodeTools(ctx, input)
 	if err != nil {
-		return input, err
+		return input, nil, err
 	}
 	runner := code.runner
 	baseArgs := []string{"--no-optional-locks", "-c", "core.quotepath=false", "--attr-source=" + input.Resolution.ResolvedHead}
@@ -43,18 +48,18 @@ func PrepareInput(ctx context.Context, input Input) (Input, error) {
 	}
 	changes, err := readInventory("--find-renames=100%")
 	if err != nil {
-		return input, err
+		return input, nil, err
 	}
 	if code.allowSimilarityCheck(changes) {
 		changes, err = readInventory("--find-renames")
 		if err != nil {
-			return input, err
+			return input, nil, err
 		}
 	}
 	if len(changes) > 0 {
 		patterns, err := diff.LoadGitignoreAtRef(ctx, input.RepoDir, input.Resolution.ResolvedHead, runner)
 		if err != nil {
-			return input, err
+			return input, nil, err
 		}
 		changes = slices.DeleteFunc(changes, func(change model.Diff) bool { return patterns.Matches(change.NewPath) })
 	}
@@ -74,7 +79,7 @@ func PrepareInput(ctx context.Context, input Input) (Input, error) {
 	}
 	batches, err := pathBatches(pathGroups, exactFilePathspec)
 	if err != nil {
-		return input, err
+		return input, nil, err
 	}
 	byPath := map[string]model.Diff{}
 	readPatch := func(batch []string, renamed bool) error {
@@ -98,21 +103,21 @@ func PrepareInput(ctx context.Context, input Input) (Input, error) {
 	}
 	for _, batch := range batches {
 		if err := readPatch(batch, false); err != nil {
-			return input, err
+			return input, nil, err
 		}
 	}
 	for _, paths := range renameGroups {
 		batches, err := pathBatches([][]string{paths}, exactFilePathspec)
 		if err != nil {
-			return input, err
+			return input, nil, err
 		}
 		if err := readPatch(batches[0], true); err != nil {
-			return input, err
+			return input, nil, err
 		}
 	}
 	for index, changed := range changes {
 		if err := ctx.Err(); err != nil {
-			return input, err
+			return input, nil, err
 		}
 		if excluded[index] {
 			input.Diffs = append(input.Diffs, changed)
@@ -120,14 +125,14 @@ func PrepareInput(ctx context.Context, input Input) (Input, error) {
 		}
 		actual, exists := byPath[changed.OldPath+"\x00"+changed.NewPath]
 		if !exists {
-			return input, fmt.Errorf("analysis diff does not match inventory for %q", changed.NewPath)
+			return input, nil, fmt.Errorf("analysis diff does not match inventory for %q", changed.NewPath)
 		}
 		if actual.IsBinary {
 			actual.Diff = ""
 		}
 		input.Diffs = append(input.Diffs, actual)
 	}
-	return input, ctx.Err()
+	return input, code, ctx.Err()
 }
 
 func (code *codeTools) allowSimilarityCheck(changes []model.Diff) bool {

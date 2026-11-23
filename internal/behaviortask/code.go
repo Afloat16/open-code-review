@@ -30,6 +30,7 @@ var numberedLine = regexp.MustCompile(`^(\d+)\|`)
 type codeTools struct {
 	runner     *gitcmd.Runner
 	registry   *tool.Registry
+	readDiff   *tool.FileReadDiffProvider
 	comparison Comparison
 	allowed    map[string]map[string]bool
 	diffs      map[string]model.Diff
@@ -70,8 +71,8 @@ func prepareCodeTools(ctx context.Context, input Input) (*codeTools, error) {
 	if err != nil {
 		return nil, err
 	}
-	result := &codeTools{runner: gitRunner, registry: tool.NewRegistry(), comparison: comparison,
-		allowed: map[string]map[string]bool{}, diffs: map[string]model.Diff{}, scope: []Change{}}
+	result := &codeTools{runner: gitRunner, registry: tool.NewRegistry(), readDiff: tool.NewFileReadDiff(tool.NewDiffMap(nil)), comparison: comparison,
+		allowed: map[string]map[string]bool{}}
 	for side, reader := range map[string]tool.FileReader{"old": previous, "new": current} {
 		result.allowed[side] = map[string]bool{}
 		if reader.Mode == tool.ModeEmpty {
@@ -101,10 +102,23 @@ func prepareCodeTools(ctx context.Context, input Input) (*codeTools, error) {
 			}
 		}
 	}
+	result.registry.Register(&tool.FileReadProvider{Access: access})
+	result.registry.Register(&tool.CodeSearchProvider{Access: access})
+	result.registry.Register(result.readDiff)
+	result.registry.Freeze()
+	if err := result.bindDiffs(input.Diffs); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (code *codeTools) bindDiffs(changes []model.Diff) error {
 	diffMap := map[string]string{}
-	for _, changed := range input.Diffs {
+	diffs := map[string]model.Diff{}
+	scope := []Change{}
+	for _, changed := range changes {
 		entry := Change{OldPath: changed.OldPath, NewPath: changed.NewPath, Deleted: changed.IsDeleted, Added: changed.IsNew, Renamed: changed.IsRenamed}
-		if (!changed.IsNew && !result.allowed["old"][changed.OldPath]) || (!changed.IsDeleted && !result.allowed["new"][changed.NewPath]) {
+		if (!changed.IsNew && !code.allowed["old"][changed.OldPath]) || (!changed.IsDeleted && !code.allowed["new"][changed.NewPath]) {
 			entry.ExcludedReason = "path is outside the authorized code scope"
 		} else if changed.IsBinary {
 			entry.ExcludedReason = "binary diff is unavailable to this task version"
@@ -114,18 +128,16 @@ func prepareCodeTools(ctx context.Context, input Input) (*codeTools, error) {
 				key = changed.OldPath
 			}
 			if _, exists := diffMap[key]; exists {
-				return nil, fmt.Errorf("duplicate diff path %q", key)
+				return fmt.Errorf("duplicate diff path %q", key)
 			}
 			diffMap[key] = changed.Diff
-			result.diffs[key] = changed
+			diffs[key] = changed
 		}
-		result.scope = append(result.scope, entry)
+		scope = append(scope, entry)
 	}
-	result.registry.Register(&tool.FileReadProvider{Access: access})
-	result.registry.Register(&tool.CodeSearchProvider{Access: access})
-	result.registry.Register(tool.NewFileReadDiff(tool.NewDiffMap(diffMap)))
-	result.registry.Freeze()
-	return result, nil
+	code.diffs, code.scope = diffs, scope
+	code.readDiff.SetDiffMap(tool.NewDiffMap(diffMap))
+	return nil
 }
 
 func safePath(filePath string) bool {
