@@ -263,7 +263,7 @@ func (r *Runner) runCompression(ctx context.Context, msgs []llm.Message, taskKey
 		return msgs, fmt.Errorf("memory compression: summary template has no summary placeholder")
 	}
 	frameTokens := llm.CountTokens(strings.ReplaceAll(r.task.Compression.SummaryTemplate, "{{summary}}", ""))
-	availableTokens := limit - CountMessagesTokens(msgs[:2]) - frameTokens - 1
+	availableTokens := limit - r.CountPromptTokens(msgs[:2]) - frameTokens - 1
 	summaryLimit := min(r.task.MaxContextTokens-limit, availableTokens/summaryOccurrences)
 	if r.task.MaxCompletionTokens > 0 {
 		summaryLimit = min(summaryLimit, r.task.MaxCompletionTokens)
@@ -271,11 +271,11 @@ func (r *Runner) runCompression(ctx context.Context, msgs []llm.Message, taskKey
 	if summaryLimit <= 0 {
 		return msgs, fmt.Errorf("memory compression: fixed prompt leaves no room for a summary")
 	}
-	part := partitionMessages(msgs, r.task.MaxContextTokens, frameTokens+summaryLimit*summaryOccurrences)
+	part := partitionMessages(msgs, r.task.MaxContextTokens, r.toolTokens+frameTokens+summaryLimit*summaryOccurrences)
 	if part.compressEnd <= part.frozenEnd {
 		return msgs, nil
 	}
-	originalTokens := CountMessagesTokens(msgs)
+	originalTokens := r.CountPromptTokens(msgs)
 	if part.activeCount == 0 && originalTokens < limit {
 		return msgs, nil
 	}
@@ -360,7 +360,7 @@ func (r *Runner) runCompression(ctx context.Context, msgs []llm.Message, taskKey
 	for i := part.compressEnd; i < len(msgs); i++ {
 		rebuilt = append(rebuilt, msgs[i])
 	}
-	rebuiltTokens := CountMessagesTokens(rebuilt)
+	rebuiltTokens := r.CountPromptTokens(rebuilt)
 	if rebuiltTokens >= limit {
 		return msgs, fmt.Errorf("memory compression: rebuilt context exceeds its threshold")
 	}

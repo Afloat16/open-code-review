@@ -1370,7 +1370,7 @@ func (a *Agent) buildMainTaskMessages(rule, changeFiles, diffs, planResult, conf
 // checkPromptBudget validates that the rendered messages fit within the token
 // limit. Returns a *subtaskStop when they do not, nil otherwise.
 func (a *Agent) checkPromptBudget(ctx context.Context, messages []llm.Message, groupKey string, round int) *subtaskStop {
-	tokenCount := llmloop.CountMessagesTokens(messages)
+	tokenCount := a.runner.CountPromptTokens(messages)
 	maxAllowed := a.args.Template.MaxTokens
 	tokenLimit := llmloop.PromptTokenLimit(maxAllowed)
 	if tokenCount <= tokenLimit {

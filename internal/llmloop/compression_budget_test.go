@@ -5,6 +5,7 @@ package llmloop
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"slices"
 	"strconv"
@@ -250,7 +251,7 @@ func TestCompressionBudgetIgnoresNonShrinkingSummary(test *testing.T) {
 	runner := NewRunner(Deps{LLMClient: client, Session: session.New(test.TempDir(), "main", "fake", session.SessionOptions{})}, task)
 	messages := []llm.Message{msg("system", "sys"), msg("user", "prompt")}
 	for range 2 {
-		messages = append(messages, msg("assistant", "read"), msg("tool", strings.Repeat("data ", 350)))
+		messages = append(messages, msg("assistant", "read"), msg("tool", strings.Repeat("data ", 300)))
 	}
 	got, err := runner.runCompression(test.Context(), messages, "task")
 	if err != nil || !reflect.DeepEqual(got, messages) {
@@ -266,7 +267,11 @@ func TestCompressionLeavesRoomForReasoning(t *testing.T) {
 			task.MaxCompletionTokens = limit
 			messages := []llm.Message{msg("system", "sys"), msg("user", strings.Repeat("prompt ", 710)), msg("assistant", "read"), msg("tool", strings.Repeat("data ", 240))}
 			frame := llm.CountTokens(strings.ReplaceAll(task.Compression.SummaryTemplate, "{{summary}}", ""))
-			visibleBudget := PromptTokenLimit(1000) - CountMessagesTokens(messages[:2]) - frame - 1
+			definitions, err := json.Marshal(task.ToolDefs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			visibleBudget := PromptTokenLimit(1000) - CountMessagesTokens(messages[:2]) - llm.CountTokens(string(definitions)) - frame - 1
 			answer := "Keep the validated finding."
 			client := taskClient(func(_ context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
 				if len(req.Messages) != len(task.Compression.Messages) || req.Messages[0].Role != task.Compression.Messages[0].Role {

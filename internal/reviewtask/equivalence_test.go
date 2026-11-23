@@ -94,7 +94,12 @@ func TestReviewExecutionEquivalence(t *testing.T) {
 						Usage:   &llm.UsageInfo{PromptTokens: 11, CompletionTokens: 7, CacheReadTokens: 3, CacheWriteTokens: 2},
 					}
 					if scenario == "compression" {
-						deps.Template.MaxTokens = 100
+						encoded, err := json.Marshal(definitions)
+						if err != nil {
+							t.Fatal(err)
+						}
+						// Keep the original message allowance alongside the fixed tool schemas.
+						deps.Template.MaxTokens = 100 + (llm.CountTokens(string(encoded))*5+3)/4
 						deps.Template.MemoryCompressionTask = defaults.MemoryCompressionTask
 						deps.Tools.Register(&fakeFileReadProvider{result: strings.Repeat("source data ", 500)})
 						client.responses = []*llm.ChatResponse{client.responses[0], auxiliary, taskDoneResponse()}
@@ -111,6 +116,9 @@ func TestReviewExecutionEquivalence(t *testing.T) {
 				}, "sample.go")
 				comments := runner.CollectPendingComments()
 				runner.WaitBackground()
+				if scenario == "compression" && (runErr != nil || !completed || len(client.requests) != 3) {
+					t.Fatalf("compression must preserve the final request: completed=%v requests=%d err=%v", completed, len(client.requests), runErr)
+				}
 				if scenario == "repaired" {
 					if runErr != nil || !completed || stop != StopNone {
 						t.Fatalf("repaired execution = %v, %v, %v", completed, stop, runErr)

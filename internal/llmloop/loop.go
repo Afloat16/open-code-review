@@ -5,6 +5,7 @@ package llmloop
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -46,6 +47,7 @@ func (r *Runner) RequestContext(ctx context.Context, taskKey string, taskType se
 type Runner struct {
 	deps                  Deps
 	task                  Task
+	toolTokens            int
 	totalInputTokens      int64 // atomically updated
 	totalOutputTokens     int64
 	totalCacheReadTokens  int64
@@ -79,7 +81,18 @@ type ToolFailureDetail struct {
 
 // NewRunner returns a Runner bound to the given dependencies.
 func NewRunner(deps Deps, task Task) *Runner {
-	return &Runner{deps: deps, task: task}
+	runner := &Runner{deps: deps, task: task}
+	if len(task.ToolDefs) > 0 {
+		if definitions, err := json.Marshal(task.ToolDefs); err == nil {
+			runner.toolTokens = llm.CountTokens(string(definitions))
+		}
+	}
+	return runner
+}
+
+// CountPromptTokens includes the definitions sent with every main-task request.
+func (r *Runner) CountPromptTokens(messages []llm.Message) int {
+	return CountMessagesTokens(messages) + r.toolTokens
 }
 
 func (r *Runner) progressError(err error) error {
@@ -595,7 +608,7 @@ func (r *Runner) addNextMessage(ctx context.Context, assistantContent string, to
 
 	// A conversation can already be over the warning threshold before this
 	// round's messages are appended (e.g. an oversized initial prompt).
-	budgetDenied := CountMessagesTokens(*messages) > warnLimit && errors.Is(compress(), llm.ErrTokenBudget)
+	budgetDenied := r.CountPromptTokens(*messages) > warnLimit && errors.Is(compress(), llm.ErrTokenBudget)
 
 	if len(toolCalls) > 0 {
 		*messages = append(*messages, llm.NewToolCallMessage(assistantContent, toolCalls, native, reasoningContent))
@@ -610,12 +623,12 @@ func (r *Runner) addNextMessage(ctx context.Context, assistantContent string, to
 		return StopTokenBudget
 	}
 
-	finalCount := CountMessagesTokens(*messages)
+	finalCount := r.CountPromptTokens(*messages)
 	if finalCount >= warnLimit {
 		if errors.Is(compress(), llm.ErrTokenBudget) {
 			return StopTokenBudget
 		}
-		finalCount = CountMessagesTokens(*messages)
+		finalCount = r.CountPromptTokens(*messages)
 		if finalCount >= warnLimit {
 			return StopCompression
 		}
