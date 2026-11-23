@@ -748,9 +748,14 @@ func emitFailureUsage(ag ResultProvider, duration time.Duration, outputFormat st
 		_ = enc.Encode(out)
 		return
 	}
-	fmt.Fprintf(os.Stderr, "[ocr] usage on failure: %d file(s), %d input + %d output = %d total tokens, %d tool calls",
-		ag.FilesReviewed(), ag.TotalInputTokens(), ag.TotalOutputTokens(), ag.TotalTokensUsed(),
-		toolTotal)
+	inputTokens, outputTokens, totalTokens := ag.TotalInputTokens(), ag.TotalOutputTokens(), ag.TotalTokensUsed()
+	fmt.Fprintf(os.Stderr, "[ocr] usage on failure: %d file(s), ", ag.FilesReviewed())
+	if unattributed := totalTokens - inputTokens - outputTokens; unattributed > 0 {
+		fmt.Fprintf(os.Stderr, "%d total tokens (input: %d, output: %d, unattributed: %d)", totalTokens, inputTokens, outputTokens, unattributed)
+	} else {
+		fmt.Fprintf(os.Stderr, "%d input + %d output = %d total tokens", inputTokens, outputTokens, totalTokens)
+	}
+	fmt.Fprintf(os.Stderr, ", %d tool calls", toolTotal)
 	if toolCallSummary.Failure > 0 {
 		fmt.Fprintf(os.Stderr, ", %d failed", toolCallSummary.Failure)
 	}

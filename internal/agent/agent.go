@@ -503,7 +503,7 @@ func (a *Agent) FileGroups() []FileGroupInfo {
 	return result
 }
 
-// TotalTokensUsed returns PromptTokens + CompletionTokens across all LLM calls.
+// TotalTokensUsed returns the available total usage across all LLM calls.
 // For Anthropic, PromptTokens already includes cache read/write tokens.
 func (a *Agent) TotalTokensUsed() int64 { return a.runner.TotalTokensUsed() }
 

@@ -50,6 +50,7 @@ type Runner struct {
 	totalOutputTokens     int64
 	totalCacheReadTokens  int64
 	totalCacheWriteTokens int64
+	totalTokens           int64
 	warningsMu            sync.Mutex
 	warnings              []AgentWarning
 	toolCallsMu           sync.Mutex
@@ -122,9 +123,9 @@ func (r *Runner) TotalCacheReadTokens() int64 { return atomic.LoadInt64(&r.total
 // TotalCacheWriteTokens returns the accumulated cache write tokens.
 func (r *Runner) TotalCacheWriteTokens() int64 { return atomic.LoadInt64(&r.totalCacheWriteTokens) }
 
-// TotalTokensUsed returns input + output.
+// TotalTokensUsed includes reported totals whose input/output split is unavailable.
 func (r *Runner) TotalTokensUsed() int64 {
-	return r.TotalInputTokens() + r.TotalOutputTokens()
+	return atomic.LoadInt64(&r.totalTokens)
 }
 
 // Warnings returns a copy of the accumulated warnings.
@@ -198,7 +199,7 @@ func (r *Runner) RecordToolFailure(number int64, name, taskKey, errMsg string,
 	}
 }
 
-// RecordUsage adds the prompt/completion/cache tokens reported by an LLM
+// RecordUsage adds the total/prompt/completion/cache tokens reported by an LLM
 // response to the runner's aggregate counters. Used by callers (plan phase
 // in agent / future scan phases) that perform their own LLM calls outside
 // Run.
@@ -210,6 +211,7 @@ func (r *Runner) RecordUsage(u *llm.UsageInfo) {
 	atomic.AddInt64(&r.totalOutputTokens, u.CompletionTokens)
 	atomic.AddInt64(&r.totalCacheReadTokens, u.CacheReadTokens)
 	atomic.AddInt64(&r.totalCacheWriteTokens, u.CacheWriteTokens)
+	atomic.AddInt64(&r.totalTokens, max(u.TotalTokens, u.PromptTokens+u.CompletionTokens))
 }
 
 // MainLoopStop identifies the limit that ended investigation, independently
@@ -368,11 +370,8 @@ func (r *Runner) runMainTask(ctx context.Context, messages []llm.Message, taskKe
 		rec.SetResponse(resp, duration)
 		totalTokens := int64(0)
 		if resp.Usage != nil {
-			totalTokens = resp.Usage.TotalTokens
-			atomic.AddInt64(&r.totalInputTokens, resp.Usage.PromptTokens)
-			atomic.AddInt64(&r.totalOutputTokens, resp.Usage.CompletionTokens)
-			atomic.AddInt64(&r.totalCacheReadTokens, resp.Usage.CacheReadTokens)
-			atomic.AddInt64(&r.totalCacheWriteTokens, resp.Usage.CacheWriteTokens)
+			totalTokens = max(resp.Usage.TotalTokens, resp.Usage.PromptTokens+resp.Usage.CompletionTokens)
+			r.RecordUsage(resp.Usage)
 		}
 		telemetry.RecordLLMResult(llmSpan, duration, totalTokens, nil)
 		llmSpan.End()
@@ -545,11 +544,8 @@ func (r *Runner) runGraceRound(ctx context.Context, messages []llm.Message, task
 	rec.SetResponse(resp, duration)
 	totalTokens := int64(0)
 	if resp.Usage != nil {
-		totalTokens = resp.Usage.TotalTokens
-		atomic.AddInt64(&r.totalInputTokens, resp.Usage.PromptTokens)
-		atomic.AddInt64(&r.totalOutputTokens, resp.Usage.CompletionTokens)
-		atomic.AddInt64(&r.totalCacheReadTokens, resp.Usage.CacheReadTokens)
-		atomic.AddInt64(&r.totalCacheWriteTokens, resp.Usage.CacheWriteTokens)
+		totalTokens = max(resp.Usage.TotalTokens, resp.Usage.PromptTokens+resp.Usage.CompletionTokens)
+		r.RecordUsage(resp.Usage)
 	}
 	telemetry.RecordLLMResult(llmSpan, duration, totalTokens, nil)
 	llmSpan.End()
