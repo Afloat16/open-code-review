@@ -10,6 +10,43 @@ import (
 	"github.com/alibaba/open-code-review/internal/model"
 )
 
+// CommentResolver reuses the most recent diff's parsed hunks within a batch.
+// Keep it local to one batch with immutable diffs; it is not concurrent state.
+// Retaining only one file bounds the cache when a batch spans many files.
+// The zero value is ready to use.
+type CommentResolver struct {
+	current *model.Diff
+	hunks   []commentHunk
+}
+
+type commentHunk struct {
+	hunk        Hunk
+	newLines    []indexedLine
+	newNonblank []indexedLine
+	oldLines    []indexedLine
+}
+
+func (h *commentHunk) newSide() []indexedLine {
+	if h.newLines == nil {
+		h.newLines = extractSideLines(&h.hunk, true)
+	}
+	return h.newLines
+}
+
+func (h *commentHunk) nonblankNewSide() []indexedLine {
+	if h.newNonblank == nil {
+		h.newNonblank = slices.DeleteFunc(slices.Clone(h.newSide()), func(line indexedLine) bool { return line.content == "" })
+	}
+	return h.newNonblank
+}
+
+func (h *commentHunk) oldSide() []indexedLine {
+	if h.oldLines == nil {
+		h.oldLines = extractSideLines(&h.hunk, false)
+	}
+	return h.oldLines
+}
+
 // ResolveLineNumbers populates StartLine/EndLine on each comment by matching
 // the ExistingCode against the corresponding file's diff hunks (primary), or
 // falling back to scanning the full new-file content line-by-line.
@@ -32,6 +69,7 @@ func ResolveLineNumbers(comments []model.LlmComment, diffs []model.Diff) []model
 
 	result := make([]model.LlmComment, len(comments))
 	copy(result, comments)
+	var resolver CommentResolver
 
 	for i := range result {
 		cm := &result[i]
@@ -46,13 +84,7 @@ func ResolveLineNumbers(comments []model.LlmComment, diffs []model.Diff) []model
 			continue
 		}
 
-		// Primary: try matching from deleted/context lines in diff hunks
-		if resolveFromHunk(d, cm) {
-			continue
-		}
-
-		// Fallback: scan the new file content for consecutive matches
-		resolveFromFileContent(d, cm)
+		resolver.Resolve(cm, d)
 	}
 
 	return result
@@ -61,13 +93,20 @@ func ResolveLineNumbers(comments []model.LlmComment, diffs []model.Diff) []model
 // ResolveComment attempts to resolve StartLine/EndLine for a single comment
 // by matching ExistingCode against the diff. Returns true on success.
 func ResolveComment(cm *model.LlmComment, d *model.Diff) bool {
+	var resolver CommentResolver
+	return resolver.Resolve(cm, d)
+}
+
+// Resolve applies the same matching order as ResolveComment while reusing the
+// most recent diff's hunk data for later comments in this batch.
+func (r *CommentResolver) Resolve(cm *model.LlmComment, d *model.Diff) bool {
 	if cm.StartLine > 0 || cm.EndLine > 0 {
 		return true
 	}
 	if cm.ExistingCode == "" {
 		return false
 	}
-	if resolveFromHunk(d, cm) {
+	if r.resolveFromHunk(d, cm) {
 		return true
 	}
 	return resolveFromFileContent(d, cm)
@@ -152,9 +191,16 @@ type indexedLine struct {
 // old-side (context + deleted → old-file line numbers). existing_code is
 // meant to quote added lines, and an old-side match reports old-file line
 // numbers, so old-side comes last and is not retried without blank lines.
-func resolveFromHunk(d *model.Diff, cm *model.LlmComment) bool {
-	hunks := ParseHunks(d.Diff)
-	if len(hunks) == 0 {
+func (r *CommentResolver) resolveFromHunk(d *model.Diff, cm *model.LlmComment) bool {
+	if r.current != d {
+		hunks := ParseHunks(d.Diff)
+		r.hunks = make([]commentHunk, len(hunks))
+		for i, hunk := range hunks {
+			r.hunks[i].hunk = hunk
+		}
+		r.current = d
+	}
+	if len(r.hunks) == 0 {
 		return false
 	}
 
@@ -163,8 +209,8 @@ func resolveFromHunk(d *model.Diff, cm *model.LlmComment) bool {
 		return false
 	}
 
-	for i := range hunks {
-		newSide := extractSideLines(&hunks[i], true)
+	for i := range r.hunks {
+		newSide := r.hunks[i].newSide()
 		if start, end, ok := matchConsecutive(newSide, targetLines); ok {
 			cm.StartLine = start
 			cm.EndLine = end
@@ -172,8 +218,8 @@ func resolveFromHunk(d *model.Diff, cm *model.LlmComment) bool {
 		}
 	}
 
-	for i := range hunks {
-		newSide := slices.DeleteFunc(extractSideLines(&hunks[i], true), func(l indexedLine) bool { return l.content == "" })
+	for i := range r.hunks {
+		newSide := r.hunks[i].nonblankNewSide()
 		if start, end, ok := matchConsecutive(newSide, targetLines); ok {
 			cm.StartLine = start
 			cm.EndLine = end
@@ -181,8 +227,8 @@ func resolveFromHunk(d *model.Diff, cm *model.LlmComment) bool {
 		}
 	}
 
-	for i := range hunks {
-		oldSide := extractSideLines(&hunks[i], false)
+	for i := range r.hunks {
+		oldSide := r.hunks[i].oldSide()
 		if start, end, ok := matchConsecutive(oldSide, targetLines); ok {
 			cm.StartLine = start
 			cm.EndLine = end

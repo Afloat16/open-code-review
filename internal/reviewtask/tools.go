@@ -108,6 +108,7 @@ func (r *Runner) executeToolCall(ctx context.Context, taskKey string, call llm.T
 		}
 
 		resolveAndCollect := func(rctx context.Context) {
+			var resolver diff.CommentResolver
 			for i := range comments {
 				cm := &comments[i]
 				var d *model.Diff
@@ -120,7 +121,7 @@ func (r *Runner) executeToolCall(ctx context.Context, taskKey string, call llm.T
 				// LLM step overwrites; and it runs even when d is nil, since a
 				// comment filed against a path this run holds no diff for is
 				// exactly the case that search can still place.
-				located := d != nil && diff.ResolveComment(cm, d)
+				located := d != nil && resolver.Resolve(cm, d)
 				if !located && r.deps.AllDiffs != nil {
 					from := cm.Path
 					if to, ok := diff.RelocateAcrossFiles(cm, r.deps.AllDiffs()); ok {
