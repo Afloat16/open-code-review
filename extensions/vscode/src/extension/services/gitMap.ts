@@ -131,25 +131,27 @@ export function unquoteGitPath(path: string): string {
   if (!path.startsWith('"') || !path.endsWith('"')) return path;
 
   const bytes: number[] = [];
-  const inner = path.slice(1, -1);
+  // With core.quotepath=false, Git can quote ASCII escapes while leaving Unicode
+  // literal. Decode the escaped byte stream without truncating UTF-16 code units.
+  const inner = Buffer.from(path.slice(1, -1), 'utf8');
   for (let i = 0; i < inner.length; i++) {
-    if (inner[i] !== '\\' || i + 1 >= inner.length) {
-      bytes.push(inner.charCodeAt(i));
+    if (inner[i] !== 0x5c || i + 1 >= inner.length) {
+      bytes.push(inner[i]);
       continue;
     }
-    if (i + 3 < inner.length && /^\d{3}$/.test(inner.slice(i + 1, i + 4))) {
-      bytes.push(parseInt(inner.slice(i + 1, i + 4), 8));
+    if (i + 3 < inner.length && /^\d{3}$/.test(inner.toString('utf8', i + 1, i + 4))) {
+      bytes.push(parseInt(inner.toString('utf8', i + 1, i + 4), 8));
       i += 3;
       continue;
     }
     i += 1;
-    const esc = inner[i];
+    const esc = String.fromCharCode(inner[i]);
     if (esc === 'n') bytes.push(0x0a);
     else if (esc === 't') bytes.push(0x09);
     else if (esc === 'r') bytes.push(0x0d);
     else if (esc === '\\') bytes.push(0x5c);
     else if (esc === '"') bytes.push(0x22);
-    else bytes.push(esc.charCodeAt(0));
+    else bytes.push(inner[i]);
   }
   return Buffer.from(bytes).toString('utf8');
 }
