@@ -31,8 +31,9 @@ type PathRule struct {
 
 // SystemRule holds review rules loaded from an external JSON config.
 type SystemRule struct {
-	DefaultRule string     `json:"default_rule"`
-	PathRules   []PathRule // ordered; first match wins
+	DefaultRule      string     `json:"default_rule"`
+	PathRules        []PathRule // ordered; first match wins
+	preparedPatterns map[string][]string
 }
 
 // UnmarshalJSON preserves the key order from JSON's path_rule_map object.
@@ -104,12 +105,14 @@ func LoadDefault() (*SystemRule, error) {
 		return nil, fmt.Errorf("read default rule file %q: %w", rule.DefaultRule, err)
 	}
 	rule.DefaultRule = strings.TrimRight(string(content), "\n")
+	rule.preparedPatterns = make(map[string][]string, len(rule.PathRules))
 	for i := range rule.PathRules {
 		content, err := rulesFS.ReadFile("rule_docs/" + rule.PathRules[i].Rule)
 		if err != nil {
 			return nil, fmt.Errorf("read rule file %q for pattern %q: %w", rule.PathRules[i].Rule, rule.PathRules[i].Pattern, err)
 		}
 		rule.PathRules[i].Rule = strings.TrimRight(string(content), "\n")
+		rule.preparedPatterns[rule.PathRules[i].Pattern] = preparePatterns(rule.PathRules[i].Pattern)
 	}
 	return &rule, nil
 }
@@ -166,14 +169,26 @@ func (r *SystemRule) CanonicalConfig() []string {
 func (r *SystemRule) resolveDetail(path string) RuleDetail {
 	lowerPath := strings.ToLower(path)
 	for _, pr := range r.PathRules {
-		expanded := expandBraces(pr.Pattern)
+		// Key by the current pattern: public rule entries may be replaced or reordered.
+		expanded, prepared := r.preparedPatterns[pr.Pattern]
+		if !prepared {
+			expanded = preparePatterns(pr.Pattern)
+		}
 		for _, p := range expanded {
-			if matched, _ := doublestar.Match(strings.ToLower(p), lowerPath); matched {
+			if matched, _ := doublestar.Match(p, lowerPath); matched {
 				return RuleDetail{Rule: pr.Rule, Source: "system", Pattern: pr.Pattern}
 			}
 		}
 	}
 	return RuleDetail{Rule: r.DefaultRule, Source: "system", Pattern: "default"}
+}
+
+func preparePatterns(pattern string) []string {
+	patterns := expandBraces(pattern)
+	for index := range patterns {
+		patterns[index] = strings.ToLower(patterns[index])
+	}
+	return patterns
 }
 
 // expandBraces turns "{a,b,c}" style patterns into individual strings.
