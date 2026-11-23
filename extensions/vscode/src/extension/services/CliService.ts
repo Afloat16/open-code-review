@@ -15,7 +15,7 @@ class CliExitError extends Error {
 }
 
 export class CliService {
-  private current: ReturnType<typeof spawn> | null = null;
+  private currentReview: ReturnType<typeof spawn> | null = null;
   private envCache: { env: EnvCheckResult; at: number } | null = null;
   private static readonly ENV_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -125,7 +125,8 @@ export class CliService {
         // leaving the native CLI or any of its subprocesses behind.
         detached: process.platform !== 'win32',
       });
-      this.current = proc;
+      // Configuration commands can overlap a review, but cancellation belongs to the review.
+      if (args[0] === 'review') this.currentReview = proc;
       let stdout = '';
       let stderr = '';
       proc.stdout.on('data', (d) => { stdout += d.toString(); });
@@ -137,9 +138,12 @@ export class CliService {
           if (parsed) onLog(parsed);
         }
       });
-      proc.on('error', (err) => { this.current = null; reject(err); });
+      proc.on('error', (err) => {
+        if (this.currentReview === proc) this.currentReview = null;
+        reject(err);
+      });
       proc.on('close', (code) => {
-        this.current = null;
+        if (this.currentReview === proc) this.currentReview = null;
         if (code === 0) { resolve(stdout); return; }
         reject(new CliExitError(code, stdout, extractCliError(stderr) || `CLI exited with code ${code}`));
       });
@@ -180,8 +184,8 @@ export class CliService {
   }
 
   cancel(): void {
-    if (this.current && this.current.pid) {
-      const proc = this.current;
+    if (this.currentReview && this.currentReview.pid) {
+      const proc = this.currentReview;
 
       // Windows does not deliver POSIX signals to the launcher. Node maps
       // kill('SIGTERM') to TerminateProcess, which kills only the launcher and

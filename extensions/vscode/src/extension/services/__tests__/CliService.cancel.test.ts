@@ -27,7 +27,7 @@ function createMockProcess() {
     signalCode: null as NodeJS.Signals | null,
     stdout: new PassThrough(),
     stderr: new PassThrough(),
-    kill: jest.fn<(signal?: NodeJS.Signals | number) => boolean>(),
+    kill: jest.fn<boolean, [signal?: NodeJS.Signals | number]>(),
   });
   proc.kill.mockImplementation((signal) => {
     proc.killed = true;
@@ -57,14 +57,14 @@ describe('CliService.cancel', () => {
     mockedSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
 
     const svc = new CliService('node');
-    void svc.runRaw([], '.', () => {});
+    void svc.runRaw(['review'], '.', () => {});
     svc.cancel();
     jest.advanceTimersByTime(3000);
 
     expect(mockedSpawn).toHaveBeenNthCalledWith(
       1,
       'node',
-      [],
+      ['review'],
       expect.objectContaining({ detached: true }),
     );
     expect(proc.kill).toHaveBeenCalledTimes(1);
@@ -78,7 +78,7 @@ describe('CliService.cancel', () => {
     mockedSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
 
     const svc = new CliService('node');
-    const run = svc.runRaw([], '.', () => {});
+    const run = svc.runRaw(['review'], '.', () => {});
     svc.cancel();
     proc.exitCode = 0;
     proc.emit('close', 0);
@@ -99,7 +99,7 @@ describe('CliService.cancel', () => {
     mockedSpawn.mockReturnValue(proc as unknown as ReturnType<typeof spawn>);
 
     const svc = new CliService('node');
-    void svc.runRaw([], '.', () => {});
+    void svc.runRaw(['review'], '.', () => {});
     svc.cancel();
     jest.advanceTimersByTime(3000);
 
@@ -117,13 +117,13 @@ describe('CliService.cancel', () => {
       .mockReturnValueOnce(treeKill as unknown as ReturnType<typeof spawn>);
 
     const svc = new CliService('node');
-    void svc.runRaw([], '.', () => {});
+    void svc.runRaw(['review'], '.', () => {});
     svc.cancel();
 
     expect(mockedSpawn).toHaveBeenNthCalledWith(
       1,
       'node',
-      [],
+      ['review'],
       expect.objectContaining({ detached: false }),
     );
     expect(mockedSpawn).toHaveBeenNthCalledWith(
@@ -144,7 +144,7 @@ describe('CliService.cancel', () => {
       .mockReturnValueOnce(treeKill as unknown as ReturnType<typeof spawn>);
 
     const svc = new CliService('node');
-    void svc.runRaw([], '.', () => {});
+    void svc.runRaw(['review'], '.', () => {});
     svc.cancel();
     treeKill.emit('error', new Error('taskkill unavailable'));
 
@@ -160,10 +160,37 @@ describe('CliService.cancel', () => {
       .mockReturnValueOnce(treeKill as unknown as ReturnType<typeof spawn>);
 
     const svc = new CliService('node');
-    void svc.runRaw([], '.', () => {});
+    void svc.runRaw(['review'], '.', () => {});
     svc.cancel();
     treeKill.emit('close', 1);
 
     expect(proc.kill).toHaveBeenCalledWith('SIGKILL');
+  });
+
+  it('keeps the review PID for Windows cancellation after a config command finishes', async () => {
+    setPlatform('win32');
+    const review = createMockProcess();
+    const config = createMockProcess();
+    config.pid = 456;
+    const treeKill = createMockProcess();
+    mockedSpawn
+      .mockReturnValueOnce(review as unknown as ReturnType<typeof spawn>)
+      .mockReturnValueOnce(config as unknown as ReturnType<typeof spawn>)
+      .mockReturnValueOnce(treeKill as unknown as ReturnType<typeof spawn>);
+
+    const svc = new CliService('node');
+    const reviewing = svc.runRaw(['review'], '.', () => {});
+    const configuring = svc.runRaw(['config', 'set', 'model', 'example'], '.', () => {});
+    config.exitCode = 0;
+    config.emit('close', 0);
+    await configuring;
+    svc.cancel();
+
+    expect(mockedSpawn).toHaveBeenNthCalledWith(
+      3, 'taskkill', ['/pid', '123', '/t', '/f'], { stdio: 'ignore', windowsHide: true },
+    );
+    review.exitCode = 0;
+    review.emit('close', 0);
+    await reviewing;
   });
 });
