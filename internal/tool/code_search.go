@@ -4,15 +4,18 @@
 package tool
 
 import (
-	"bytes"
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/alibaba/open-code-review/internal/gitcmd"
 )
 
 const (
@@ -118,30 +121,21 @@ func hasTraversalPathComponent(pathspec string) bool {
 	return slices.Contains(strings.Split(norm, "/"), "..")
 }
 
-func (p *CodeSearchProvider) runGitGrep(parentCtx context.Context, cmdArgs []string) (string, string, error) {
+func (p *CodeSearchProvider) runGitGrep(parentCtx context.Context, cmdArgs []string) (*grepMatches, string, error) {
 	ctx, cancel := context.WithTimeout(parentCtx, gitGrepTimeout)
 	defer cancel()
 
-	if p.FileReader.Runner != nil {
-		stdout, stderr, err := p.FileReader.Runner.RunSplit(ctx, p.FileReader.RepoDir, cmdArgs...)
-		if ctx.Err() != nil && err != nil {
-			return "", "", ctx.Err()
-		}
-		return stdout, stderr, err
+	result := &grepMatches{hasRef: p.FileReader.Ref != "", files: make(map[string][]grepMatch), matchedFiles: make(map[string]bool)}
+	runner := p.FileReader.Runner
+	if runner == nil {
+		runner = gitcmd.New(1)
 	}
-
-	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
-	cmd.Dir = p.FileReader.RepoDir
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if ctx.Err() != nil && err != nil && cmd.ProcessState != nil && cmd.ProcessState.ExitCode() == -1 {
-		return "", "", ctx.Err()
+	err := runner.Stream(ctx, p.FileReader.RepoDir, result.read, cmdArgs...)
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return result, string(exitErr.Stderr), exitErr
 	}
-	return stdout.String(), stderr.String(), err
+	return result, "", err
 }
 
 func (p *CodeSearchProvider) gitGrep(ctx context.Context, searchText string, caseSensitive bool, usePerlRegexp bool, pathspec []string) (string, error) {
@@ -171,7 +165,7 @@ func (p *CodeSearchProvider) gitGrep(ctx context.Context, searchText string, cas
 		if errors.Is(err, context.Canceled) {
 			return "", err
 		}
-		if outStr == "" {
+		if !outStr.hasOutput {
 			var exitErr *exec.ExitError
 			exitCode := -1
 			if errors.As(err, &exitErr) {
@@ -188,77 +182,94 @@ func (p *CodeSearchProvider) gitGrep(ctx context.Context, searchText string, cas
 		}
 	}
 
-	lines := strings.Split(strings.TrimRight(outStr, "\n"), "\n")
-
-	type match struct {
-		lineNum int
-		content string
+	result := outStr.render()
+	if err != nil && errStr != "" {
+		result += fmt.Sprintf("Warning: %s\n", strings.TrimSpace(errStr))
 	}
-	fileMatches := make(map[string][]match)
-	var fileOrder []string
-	seen := make(map[string]bool)
+	return result, nil
+}
 
-	hasRef := p.FileReader.Ref != ""
+type grepMatch struct {
+	lineNum int
+	content string
+}
+
+type grepMatches struct {
+	hasRef       bool
+	hasOutput    bool
+	count        int
+	truncated    bool
+	files        map[string][]grepMatch
+	fileOrder    []string
+	matchedFiles map[string]bool
+}
+
+// read drains stdout even after the render limit so the matched-file count
+// remains exact. Only rendered matches and distinct filenames survive a line.
+func (matches *grepMatches) read(stdout io.Reader) error {
+	reader := bufio.NewReader(stdout)
+	for {
+		line, err := reader.ReadString('\n')
+		if line != "" {
+			matches.hasOutput = true
+			matches.add(strings.TrimSuffix(line, "\n"))
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
+		}
+	}
+}
+
+func (matches *grepMatches) add(line string) {
 	splitN := 3
 	offset := 0
-	if hasRef {
+	if matches.hasRef {
 		splitN = 4
 		offset = 1
 	}
-
-	matchCount := 0
-	truncated := false
-	matchedFiles := make(map[string]bool)
-	for _, line := range lines {
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, ":", splitN)
-		if len(parts) < splitN {
-			continue
-		}
-		fname := parts[offset]
-		ln, parseErr := strconv.Atoi(parts[offset+1])
-		if parseErr != nil {
-			// Skip lines whose line-number field is not numeric.
-			continue
-		}
-		// Count every file with a text match, including those beyond the render
-		// budget, so the truncation note can report the true matched-file count.
-		matchedFiles[fname] = true
-		if matchCount >= gitGrepMaxCount {
-			// Keep scanning to finish counting matched files, but render no more.
-			truncated = true
-			continue
-		}
-		m := match{lineNum: ln, content: parts[offset+2]}
-		if !seen[fname] {
-			seen[fname] = true
-			fileOrder = append(fileOrder, fname)
-		}
-		fileMatches[fname] = append(fileMatches[fname], m)
-		matchCount++
+	parts := strings.SplitN(line, ":", splitN)
+	if len(parts) < splitN {
+		return
 	}
+	fname := parts[offset]
+	ln, err := strconv.Atoi(parts[offset+1])
+	if err != nil {
+		return
+	}
+	if !matches.matchedFiles[fname] {
+		// A substring of a discarded match must not retain its full line.
+		matches.matchedFiles[strings.Clone(fname)] = true
+	}
+	if matches.count >= gitGrepMaxCount {
+		matches.truncated = true
+		return
+	}
+	if _, exists := matches.files[fname]; !exists {
+		matches.fileOrder = append(matches.fileOrder, fname)
+	}
+	matches.files[fname] = append(matches.files[fname], grepMatch{lineNum: ln, content: parts[offset+2]})
+	matches.count++
+}
 
+func (matches *grepMatches) render() string {
 	var sb strings.Builder
-	if truncated {
-		sb.WriteString(fmt.Sprintf("Note: Showing the first %d matches across %d matching files. Some files are partially shown or omitted entirely. Narrow file_patterns to see the rest.\n", gitGrepMaxCount, len(matchedFiles)))
+	if matches.truncated {
+		sb.WriteString(fmt.Sprintf("Note: Showing the first %d matches across %d matching files. Some files are partially shown or omitted entirely. Narrow file_patterns to see the rest.\n", gitGrepMaxCount, len(matches.matchedFiles)))
 	}
 
-	for _, path := range fileOrder {
-		matches := fileMatches[path]
-		sb.WriteString(fmt.Sprintf("File: %s\nMatch lines: %d\n", path, len(matches)))
-		for _, m := range matches {
+	for _, path := range matches.fileOrder {
+		fileMatches := matches.files[path]
+		sb.WriteString(fmt.Sprintf("File: %s\nMatch lines: %d\n", path, len(fileMatches)))
+		for _, m := range fileMatches {
 			sb.WriteString(fmt.Sprintf("%d|%s\n", m.lineNum, m.content))
 		}
 		sb.WriteString("\n")
 	}
 
-	if err != nil && errStr != "" {
-		sb.WriteString(fmt.Sprintf("Warning: %s\n", strings.TrimSpace(errStr)))
-	}
-
-	return sb.String(), nil
+	return sb.String()
 }
 
 func trimGitUsage(stderr string, exitCode int) string {

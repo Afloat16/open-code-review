@@ -163,6 +163,10 @@ func TestRunner_StreamFailureIncludesStderr(t *testing.T) {
 	if !strings.Contains(err.Error(), "does-not-exist") {
 		t.Errorf("error %q should carry git's stderr", err)
 	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || !strings.Contains(string(exitErr.Stderr), "does-not-exist") {
+		t.Errorf("structured exit error should expose stderr to stream consumers: %v", err)
+	}
 }
 
 // RunSplit must still expose stderr on the returned error path.

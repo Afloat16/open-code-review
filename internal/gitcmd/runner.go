@@ -483,6 +483,9 @@ func (r *Runner) Stream(ctx context.Context, repoDir string, consume func(stdout
 		return consumeErr
 	}
 	if waitErr != nil {
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
+			exitErr.Stderr = stderrBuf.Bytes()
+		}
 		if stderrBuf.Len() > 0 {
 			return fmt.Errorf("%w: %s", waitErr, stderrBuf.String())
 		}
