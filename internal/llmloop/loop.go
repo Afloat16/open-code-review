@@ -389,6 +389,10 @@ func (r *Runner) runMainTask(ctx context.Context, messages []llm.Message, taskKe
 			if content != "" || native.Payload != nil || reasoning != "" {
 				messages = append(messages[:len(messages)-1], llm.NewToolCallMessage(content, nil, native, reasoning), messages[len(messages)-1])
 			}
+			if nextStop := r.addNextMessage(ctx, "", nil, llm.NativeTurn{}, "", nil, &messages, taskKey, st); nextStop != StopNone {
+				stop = nextStop
+				break
+			}
 			continue
 		}
 
