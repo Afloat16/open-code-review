@@ -6,6 +6,7 @@ process.env.OCR_SKIP_SHELL_RESOLVE = '1';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { PassThrough } from 'stream';
 import { ReviewMode } from '@shared/types';
 import { CliService } from '../CliService';
 import { ReviewSession } from '../ReviewSession';
@@ -40,7 +41,7 @@ describe('CliService probe shell option', () => {
   it('passes shell: true to probeCommand on Windows', async () => {
     Object.defineProperty(process, 'platform', { value: 'win32' });
     const mockProc = {
-      stdout: { on: jest.fn() },
+      stdout: new PassThrough(),
       on: jest.fn((event: string, cb: (code: number) => void) => {
         if (event === 'close') cb(0);
       }),
@@ -60,7 +61,7 @@ describe('CliService probe shell option', () => {
   it('does not pass shell to probeCommand on non-Windows platforms', async () => {
     Object.defineProperty(process, 'platform', { value: 'linux' });
     const mockProc = {
-      stdout: { on: jest.fn() },
+      stdout: new PassThrough(),
       on: jest.fn((event: string, cb: (code: number) => void) => {
         if (event === 'close') cb(0);
       }),

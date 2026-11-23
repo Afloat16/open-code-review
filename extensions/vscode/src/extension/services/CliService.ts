@@ -45,7 +45,7 @@ export class CliService {
       const proc = spawn(resolveBin(bin), ['--version'], { env: getShellEnv(), shell: process.platform === 'win32' });
       let stdout = '';
       let errored = false;
-      proc.stdout?.on('data', (d) => { stdout += d.toString(); });
+      proc.stdout?.setEncoding('utf8').on('data', (text: string) => { stdout += text; });
       proc.on('error', () => { errored = true; resolve({ ok: false }); });
       proc.on('close', (code) => {
         if (errored || code !== 0) {
@@ -97,8 +97,8 @@ export class CliService {
           if (flush && chunk.trim() && parts.length === 0) onLog({ text: chunk, level });
         };
       })();
-      proc.stdout?.on('data', (d) => emitLines(d.toString(), 'info'));
-      proc.stderr?.on('data', (d) => emitLines(d.toString(), 'info'));
+      proc.stdout?.setEncoding('utf8').on('data', (text: string) => emitLines(text, 'info'));
+      proc.stderr?.setEncoding('utf8').on('data', (text: string) => emitLines(text, 'info'));
       proc.on('error', (err) => { onLog({ text: String(err), level: 'error' }); resolve(false); });
       proc.on('close', (code) => {
         emitLines('', 'info', true);
@@ -128,9 +128,8 @@ export class CliService {
       this.current = proc;
       let stdout = '';
       let stderr = '';
-      proc.stdout.on('data', (d) => { stdout += d.toString(); });
-      proc.stderr.on('data', (d) => {
-        const text = d.toString();
+      proc.stdout.setEncoding('utf8').on('data', (text: string) => { stdout += text; });
+      proc.stderr.setEncoding('utf8').on('data', (text: string) => {
         stderr += text;
         for (const line of text.split('\n')) {
           const parsed = parseLogLine(line);
