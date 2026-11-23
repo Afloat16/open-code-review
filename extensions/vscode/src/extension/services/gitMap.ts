@@ -156,7 +156,7 @@ export function unquoteGitPath(path: string): string {
 
 /**
  * Parse `git diff --name-status` or `git show --name-status` output.
- * Lines are tab-separated: status<TAB>path, or R<score><TAB>old<TAB>new for renames (use new).
+ * Lines are tab-separated: status<TAB>path, or R<score><TAB>old<TAB>new for renames.
  */
 export function parseNameStatus(output: string): FileChange[] {
   const files: FileChange[] = [];
@@ -169,7 +169,11 @@ export function parseNameStatus(output: string): FileChange[] {
     const path = unquoteGitPath(parts.length >= 3 ? parts[parts.length - 1] : parts[1]);
     if (seen.has(path)) continue;
     seen.add(path);
-    files.push({ path, status: mapStatusCode(codeChar) });
+    files.push({
+      path,
+      status: mapStatusCode(codeChar),
+      ...(codeChar === 'R' && parts.length >= 3 ? { oldPath: unquoteGitPath(parts[1]) } : {}),
+    });
   }
   return files;
 }

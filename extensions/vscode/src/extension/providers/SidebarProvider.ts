@@ -83,7 +83,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
       case 'openFileDiff':
         await this.git.openDiff({
-          path: msg.path, status: msg.status, mode: msg.mode,
+          path: msg.path, oldPath: msg.oldPath, status: msg.status, mode: msg.mode,
           from: msg.from, to: msg.to, commit: msg.commit,
         });
         break;

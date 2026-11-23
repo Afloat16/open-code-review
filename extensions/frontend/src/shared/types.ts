@@ -80,6 +80,8 @@ export interface CommitInfo {
 
 export interface FileChange {
   path: string;
+  /** Previous path for a Git-detected rename. */
+  oldPath?: string;
   status: 'added' | 'modified' | 'deleted' | 'renamed' | 'binary';
 }
 

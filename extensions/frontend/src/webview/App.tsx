@@ -40,7 +40,7 @@ export function App() {
     bridge.post({ type: 'getModeFiles', mode, from, to, commit });
   };
   const openFile = (file: FileChange, mode: ReviewMode, from?: string, to?: string, commit?: string) => {
-    bridge.post({ type: 'openFileDiff', path: file.path, status: file.status, mode, from, to, commit });
+    bridge.post({ type: 'openFileDiff', path: file.path, oldPath: file.oldPath, status: file.status, mode, from, to, commit });
   };
 
   return (

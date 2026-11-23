@@ -13,7 +13,7 @@ const WORKSPACE_REFRESH_DEBOUNCE_MS = 300;
 export class GitService {
   private api: any | null = null;
   private cache: GitState = { branches: [], currentBranch: '', recentCommits: [], workspaceFiles: [] };
-  private reviewFileStatus = new Map<string, FileChange['status']>();
+  private reviewFiles = new Map<string, FileChange>();
 
   constructor(private log?: vscode.OutputChannel) {}
 
@@ -268,7 +268,7 @@ export class GitService {
 
   /** Open a review file in the native VS Code diff view. Each of the three modes determines its left and right sides. */
   async openDiff(opts: {
-    path: string; status: FileChange['status'];
+    path: string; oldPath?: string; status: FileChange['status'];
     mode: ReviewMode; from?: string; to?: string; commit?: string;
   }): Promise<void> {
     const api = await this.ensureApi();
@@ -276,6 +276,7 @@ export class GitService {
     if (!api || !root) return;
 
     const fileUri = vscode.Uri.file(`${root}/${opts.path}`);
+    const leftPath = opts.oldPath ?? opts.path;
 
     if (opts.status === 'binary') {
       if (opts.mode === ReviewMode.Workspace) {
@@ -286,7 +287,7 @@ export class GitService {
 
     if (opts.mode === ReviewMode.Workspace) {
       const emptyRef = '';
-      const left = api.toGitUri(fileUri, opts.status === 'added' ? emptyRef : 'HEAD');
+      const left = api.toGitUri(vscode.Uri.file(`${root}/${leftPath}`), opts.status === 'added' ? emptyRef : 'HEAD');
       const right = opts.status === 'deleted' ? api.toGitUri(fileUri, emptyRef) : fileUri;
       const label = t(resolveLocale(vscode.env.language), 'ext.git.workspaceVsHead');
       await this.presentDiff(left, right, `${opts.path} (${label})`);
@@ -300,6 +301,7 @@ export class GitService {
       const rightRef = opts.status === 'deleted' ? null : opts.commit;
       await this.presentRefDiff(api, root, opts.path, opts.status, leftRef, rightRef, `${opts.path} (${label})`, {
         fallbackRange: `${parent}..${opts.commit}`,
+        oldPath: opts.oldPath,
       });
       return;
     }
@@ -314,6 +316,7 @@ export class GitService {
       const rightRef = opts.status === 'deleted' ? null : resolvedTo;
       await this.presentRefDiff(api, root, opts.path, opts.status, leftRef, rightRef, `${opts.path} (${label})`, {
         fallbackRange: `${resolvedFrom}...${resolvedTo}`,
+        oldPath: opts.oldPath,
       });
     }
   }
@@ -327,13 +330,13 @@ export class GitService {
     leftRef: string | null,
     rightRef: string | null,
     title: string,
-    opts: { fallbackRange: string },
+    opts: { fallbackRange: string; oldPath?: string },
   ): Promise<void> {
-    const left = await this.resolveDiffSide(api, root, relPath, leftRef, status, 'left');
+    const left = await this.resolveDiffSide(api, root, opts.oldPath ?? relPath, leftRef, status, 'left');
     const right = await this.resolveDiffSide(api, root, relPath, rightRef, status, 'right');
     const opened = await this.presentDiff(left, right, title);
     if (!opened) {
-      await this.presentPatchDiff(root, opts.fallbackRange, relPath, title);
+      await this.presentPatchDiff(root, opts.fallbackRange, relPath, title, opts.oldPath);
     }
   }
 
@@ -376,10 +379,11 @@ export class GitService {
     range: string,
     relPath: string,
     title: string,
+    oldPath?: string,
   ): Promise<void> {
     let patch = '';
     try {
-      patch = await runGit(root, ['diff', range, '--', relPath]);
+      patch = await runGit(root, ['diff', range, '--', ...(oldPath ? [oldPath, relPath] : [relPath])]);
     } catch (e) {
       this.trace(`presentPatchDiff failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -408,20 +412,20 @@ export class GitService {
     }
   }
 
-  /** Cache file statuses before a commit or branch review for use when attaching comments. */
+  /** Cache file statuses and rename sources before a commit or branch review. */
   async prepareReviewFileStatus(ctx: ReviewContext): Promise<void> {
-    this.reviewFileStatus.clear();
+    this.reviewFiles.clear();
     if (ctx.mode === ReviewMode.Commit && ctx.commit) {
       const files = await this.getCommitFiles(ctx.commit);
-      for (const f of files) this.reviewFileStatus.set(f.path, f.status);
+      for (const f of files) this.reviewFiles.set(f.path, f);
     } else if (ctx.mode === ReviewMode.Branch && ctx.from && ctx.to) {
       const files = await this.getBranchDiff(ctx.from, ctx.to);
-      for (const f of files) this.reviewFileStatus.set(f.path, f.status);
+      for (const f of files) this.reviewFiles.set(f.path, f);
     }
   }
 
   async getReviewFileStatus(path: string): Promise<FileChange['status'] | null> {
-    return this.reviewFileStatus.get(path) ?? null;
+    return this.reviewFiles.get(path)?.status ?? null;
   }
 
   async readFileAtRef(ref: string, relPath: string): Promise<string | null> {
@@ -457,10 +461,12 @@ export class GitService {
     mountSide: 'left' | 'right';
     leftRef: string | null;
     rightRef: string | null;
+    leftPath: string;
   } | null> {
     const api = await this.ensureApi();
     const root = await this.repoRoot();
     if (!api || !root) return null;
+    const leftPath = this.reviewFiles.get(relPath)?.oldPath ?? relPath;
 
     if (ctx.mode === ReviewMode.Commit && ctx.commit) {
       const parent = `${ctx.commit}^`;
@@ -469,9 +475,9 @@ export class GitService {
       const rightRef = status === 'deleted' ? null : ctx.commit;
       const mountRef = status === 'deleted' ? parent : ctx.commit;
       const mountSide: 'left' | 'right' = status === 'deleted' ? 'left' : 'right';
-      const left = await this.resolveDiffSide(api, root, relPath, leftRef, status, 'left');
+      const left = await this.resolveDiffSide(api, root, leftPath, leftRef, status, 'left');
       const right = await this.resolveDiffSide(api, root, relPath, rightRef, status, 'right');
-      return { left, right, title: `${relPath} (${label})`, mountRef, mountSide, leftRef, rightRef };
+      return { left, right, title: `${relPath} (${label})`, mountRef, mountSide, leftRef, rightRef, leftPath };
     }
 
     if (ctx.mode === ReviewMode.Branch && ctx.from && ctx.to) {
@@ -484,9 +490,9 @@ export class GitService {
       const rightRef = status === 'deleted' ? null : resolvedTo;
       const mountRef = status === 'deleted' ? base : resolvedTo;
       const mountSide: 'left' | 'right' = status === 'deleted' ? 'left' : 'right';
-      const left = await this.resolveDiffSide(api, root, relPath, leftRef, status, 'left');
+      const left = await this.resolveDiffSide(api, root, leftPath, leftRef, status, 'left');
       const right = await this.resolveDiffSide(api, root, relPath, rightRef, status, 'right');
-      return { left, right, title: `${relPath} (${label})`, mountRef, mountSide, leftRef, rightRef };
+      return { left, right, title: `${relPath} (${label})`, mountRef, mountSide, leftRef, rightRef, leftPath };
     }
 
     return null;

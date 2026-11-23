@@ -48,6 +48,7 @@ export interface CommentAnchorDeps {
     mountSide: 'left' | 'right';
     leftRef: string | null;
     rightRef: string | null;
+    leftPath?: string;
   } | null>;
   toGitUri: (path: string, ref: string) => Promise<vscode.Uri>;
 }
@@ -155,7 +156,8 @@ export async function resolveCommentAnchor(
   if (!diff) return { kind: 'sidebar', reason: 'missing-file' };
 
   const primaryRef = diff.mountRef;
-  const primaryContent = await deps.readAtRef(primaryRef, comment.path);
+  let mountPath = diff.mountSide === 'left' ? diff.leftPath ?? comment.path : comment.path;
+  const primaryContent = await deps.readAtRef(primaryRef, mountPath);
   let lines = primaryContent
     ? resolveLinesInContent(primaryContent, comment.startLine, comment.endLine, comment.existingCode)
     : null;
@@ -167,7 +169,8 @@ export async function resolveCommentAnchor(
     const altRef = diff.mountSide === 'right' ? diff.leftRef : diff.rightRef;
     const altSide: CommentMountSide = diff.mountSide === 'right' ? 'left' : 'right';
     if (altRef) {
-      const altContent = await deps.readAtRef(altRef, comment.path);
+      const altPath = altSide === 'left' ? diff.leftPath ?? comment.path : comment.path;
+      const altContent = await deps.readAtRef(altRef, altPath);
       const altLines = altContent
         ? resolveLinesInContent(altContent, comment.startLine, comment.endLine, comment.existingCode)
         : null;
@@ -175,13 +178,14 @@ export async function resolveCommentAnchor(
         lines = altLines;
         mountRef = altRef;
         mountSide = altSide;
+        mountPath = altPath;
       }
     }
   }
 
   if (!lines) return { kind: 'sidebar', reason: 'unresolved' };
 
-  const uri = await deps.toGitUri(comment.path, mountRef);
+  const uri = await deps.toGitUri(mountPath, mountRef);
   return {
     kind: 'mountable',
     uri,
