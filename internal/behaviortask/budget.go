@@ -80,10 +80,17 @@ func (client *budgetClient) complete(ctx context.Context, request llm.ChatReques
 				if message.Content != nil {
 					output += int64(llm.CountTokens(*message.Content))
 				}
-				output += int64(llm.CountTokens(message.ReasoningContent))
+				generated := int64(llm.CountTokens(message.ReasoningContent))
 				for _, call := range message.ToolCalls {
-					output += int64(llm.CountTokens(call.Function.Arguments))
+					generated += int64(llm.CountTokens(call.Function.Arguments))
 				}
+				if message.Native.Payload != nil {
+					replay := llm.Message{Native: message.Native, ToolCalls: message.ToolCalls}
+					// Native replay includes projections of reasoning and tool calls;
+					// counting both representations would charge them twice.
+					generated = max(generated, int64(replay.EstimatedTokens()))
+				}
+				output += generated
 			}
 			usage = &llm.UsageInfo{PromptTokens: input, CompletionTokens: output, TotalTokens: input + output}
 			response.Usage = usage
