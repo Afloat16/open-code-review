@@ -6,7 +6,6 @@ package scan
 import (
 	"fmt"
 
-	"github.com/alibaba/open-code-review/internal/llm"
 	"github.com/alibaba/open-code-review/internal/model"
 )
 
@@ -41,11 +40,11 @@ type Estimate struct {
 // summary phases. Returns 0 for files that are skipped before dispatch
 // (binary / empty). Used both by the aggregate estimate and by the
 // per-file budget look-ahead in dispatch.
-func estimateFileTokens(it model.ScanItem, planEnabled func(model.ScanItem) bool) int64 {
+func estimateFileTokens(it model.ScanItem, planEnabled func(model.ScanItem) bool, countTokens func(string) int) int64 {
 	if it.IsBinary || it.Content == "" {
 		return 0
 	}
-	fileTokens := int64(llm.CountTokens(it.Content))
+	fileTokens := int64(countTokens(it.Content))
 
 	var total int64
 	if planEnabled(it) {
@@ -58,7 +57,7 @@ func estimateFileTokens(it model.ScanItem, planEnabled func(model.ScanItem) bool
 	return total
 }
 
-func estimateCost(items []model.ScanItem, planEnabled func(model.ScanItem) bool, dedupEnabled, summaryEnabled bool) Estimate {
+func estimateCost(items []model.ScanItem, planEnabled func(model.ScanItem) bool, dedupEnabled, summaryEnabled bool, countTokens func(string) int) Estimate {
 	var est Estimate
 	var allCommentsApprox int64
 
@@ -72,7 +71,7 @@ func estimateCost(items []model.ScanItem, planEnabled func(model.ScanItem) bool,
 		// split input/output here since the look-ahead only needs the total.
 		// Recompute the input/output split inline to keep the headline
 		// numbers meaningful.
-		fileTokens := int64(llm.CountTokens(it.Content))
+		fileTokens := int64(countTokens(it.Content))
 		if planEnabled(*it) {
 			est.InputTokens += fileTokens + promptOverheadTokens
 			est.OutputTokens += 400

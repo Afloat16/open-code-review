@@ -65,7 +65,7 @@ type groupingSessionOpts struct {
 
 // groupDiffs calls the LLM with file metadata (no diff content) to produce
 // semantic groups. Falls back to one-file-per-group on any error.
-func groupDiffs(ctx context.Context, diffs []model.Diff, client llm.LLMClient, modelName string, tpl template.Template, tokenLimit int, sessOpts *groupingSessionOpts) groupDiffsResult {
+func groupDiffs(ctx context.Context, diffs []model.Diff, client llm.LLMClient, modelName string, tpl template.Template, tokenLimit int, countTokens func(string) int, sessOpts *groupingSessionOpts) groupDiffsResult {
 	if len(diffs) <= 1 {
 		// Nothing to partition, whatever the thresholds say. This short-circuit is
 		// unconditional and must stay ahead of GroupingPlan, which returns
@@ -90,7 +90,7 @@ func groupDiffs(ctx context.Context, diffs []model.Diff, client llm.LLMClient, m
 	// Template.GroupingPlan.
 	totalChanged, _ := diffsChurn(diffs)
 	if strategy := tpl.GroupingPlan(len(diffs), totalChanged); strategy != template.GroupingViaLLM {
-		return groupDiffsResult{groups: groupWithoutLLM(ctx, diffs, strategy, tpl, totalChanged, tokenLimit)}
+		return groupDiffsResult{groups: groupWithoutLLM(ctx, diffs, strategy, tpl, totalChanged, tokenLimit, countTokens)}
 	}
 
 	if tpl.GroupingTask == nil || len(tpl.GroupingTask.Messages) == 0 {
@@ -103,7 +103,7 @@ func groupDiffs(ctx context.Context, diffs []model.Diff, client llm.LLMClient, m
 		return groupDiffsResult{groups: toSingleFileGroups(diffs), usage: usage}
 	}
 
-	groups = enforceGroupTokenBudget(groups, tokenLimit)
+	groups = enforceGroupTokenBudget(groups, tokenLimit, countTokens)
 	return groupDiffsResult{groups: groups, usage: usage}
 }
 
@@ -112,7 +112,7 @@ func groupDiffs(ctx context.Context, diffs []model.Diff, client llm.LLMClient, m
 // the decision but not the thresholds, which ride on the telemetry event
 // instead: a threshold of 0 disables its step, and there is then no meaningful
 // comparison for the log line to claim.
-func groupWithoutLLM(ctx context.Context, diffs []model.Diff, strategy template.GroupingStrategy, tpl template.Template, totalChanged int64, tokenLimit int) []FileGroup {
+func groupWithoutLLM(ctx context.Context, diffs []model.Diff, strategy template.GroupingStrategy, tpl template.Template, totalChanged int64, tokenLimit int, countTokens func(string) int) []FileGroup {
 	groups := toSingleFileGroups(diffs)
 	if strategy == template.GroupingBundleAll {
 		// enforceMaxFilesPerGroup guards a GroupingMinFiles raised past
@@ -128,7 +128,7 @@ func groupWithoutLLM(ctx context.Context, diffs []model.Diff, strategy template.
 		// which pays the fixed prompt overhead once per file, while a bundle's
 		// files share one conversation.
 		groups = enforceMaxFilesPerGroup([]FileGroup{{Label: smallChangeSetLabel, Diffs: diffs}})
-		groups = enforceGroupTokenBudget(groups, tokenLimit)
+		groups = enforceGroupTokenBudget(groups, tokenLimit, countTokens)
 	}
 
 	// The log describes the partition that came out, not the one GroupingPlan
@@ -339,7 +339,7 @@ func enforceMaxFilesPerGroup(groups []FileGroup) []FileGroup {
 }
 
 // enforceGroupTokenBudget splits groups whose combined diffs exceed the token limit.
-func enforceGroupTokenBudget(groups []FileGroup, tokenLimit int) []FileGroup {
+func enforceGroupTokenBudget(groups []FileGroup, tokenLimit int, countTokens func(string) int) []FileGroup {
 	if tokenLimit <= 0 {
 		return groups
 	}
@@ -347,7 +347,7 @@ func enforceGroupTokenBudget(groups []FileGroup, tokenLimit int) []FileGroup {
 	for _, g := range groups {
 		total := int64(0)
 		for _, d := range g.Diffs {
-			total += int64(llm.CountTokens(d.Diff))
+			total += int64(countTokens(d.Diff))
 		}
 		if total <= int64(tokenLimit) {
 			result = append(result, g)

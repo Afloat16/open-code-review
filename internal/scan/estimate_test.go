@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/alibaba/open-code-review/internal/config/template"
+	"github.com/alibaba/open-code-review/internal/llm"
 	"github.com/alibaba/open-code-review/internal/model"
 )
 
@@ -40,7 +41,7 @@ func TestEstimateCost_ScalesWithContentAndPhases(t *testing.T) {
 	}
 
 	// Plan off, dedup off, summary off → only MAIN_TASK cost.
-	base := estimateCost(items, noPlan, false, false)
+	base := estimateCost(items, noPlan, false, false, llm.CountTokens)
 	if base.Files != 2 {
 		t.Fatalf("expected 2 reviewable files, got %d", base.Files)
 	}
@@ -49,13 +50,13 @@ func TestEstimateCost_ScalesWithContentAndPhases(t *testing.T) {
 	}
 
 	// Turning plan on must increase the estimate.
-	planned := estimateCost(items, withPlan, false, false)
+	planned := estimateCost(items, withPlan, false, false, llm.CountTokens)
 	if planned.TotalTokens <= base.TotalTokens {
 		t.Errorf("plan should raise estimate: base=%d withPlan=%d", base.TotalTokens, planned.TotalTokens)
 	}
 
 	// Summary + dedup on top must increase further.
-	full := estimateCost(items, withPlan, true, true)
+	full := estimateCost(items, withPlan, true, true, llm.CountTokens)
 	if full.TotalTokens <= planned.TotalTokens {
 		t.Errorf("dedup+summary should raise estimate: withPlan=%d full=%d", planned.TotalTokens, full.TotalTokens)
 	}
@@ -70,16 +71,16 @@ func TestEstimateFileTokens(t *testing.T) {
 	withPlan := func(model.ScanItem) bool { return true }
 	noPlan := func(model.ScanItem) bool { return false }
 	// Binary / empty → 0 (skipped before dispatch).
-	if got := estimateFileTokens(model.ScanItem{Path: "x", IsBinary: true}, withPlan); got != 0 {
+	if got := estimateFileTokens(model.ScanItem{Path: "x", IsBinary: true}, withPlan, llm.CountTokens); got != 0 {
 		t.Errorf("binary file should estimate 0, got %d", got)
 	}
-	if got := estimateFileTokens(model.ScanItem{Path: "x", Content: ""}, withPlan); got != 0 {
+	if got := estimateFileTokens(model.ScanItem{Path: "x", Content: ""}, withPlan, llm.CountTokens); got != 0 {
 		t.Errorf("empty file should estimate 0, got %d", got)
 	}
 
 	it := model.ScanItem{Path: "a.go", Content: strings.Repeat("token ", 400)}
-	planned := estimateFileTokens(it, withPlan)
-	unplanned := estimateFileTokens(it, noPlan)
+	planned := estimateFileTokens(it, withPlan, llm.CountTokens)
+	unplanned := estimateFileTokens(it, noPlan, llm.CountTokens)
 	if planned <= 0 || unplanned <= 0 {
 		t.Fatalf("expected positive estimates, got plan=%d noplan=%d", planned, unplanned)
 	}
@@ -89,7 +90,7 @@ func TestEstimateFileTokens(t *testing.T) {
 
 	// Per-file estimate must equal the aggregate single-file MAIN+PLAN cost
 	// (sanity that the aggregate and look-ahead share the same model).
-	agg := estimateCost([]model.ScanItem{it}, withPlan, false, false)
+	agg := estimateCost([]model.ScanItem{it}, withPlan, false, false, llm.CountTokens)
 	if agg.TotalTokens != planned {
 		t.Errorf("aggregate single-file total (%d) != per-file estimate (%d)", agg.TotalTokens, planned)
 	}
@@ -112,8 +113,8 @@ func TestEstimateFileTokens_UsesPerFilePlanPredicate(t *testing.T) {
 
 	noPlan := func(it model.ScanItem) bool { return false }
 	for _, it := range items {
-		got := estimateFileTokens(it, a.planEnabledFor)
-		want := estimateFileTokens(it, noPlan)
+		got := estimateFileTokens(it, a.planEnabledFor, llm.CountTokens)
+		want := estimateFileTokens(it, noPlan, llm.CountTokens)
 		if a.planEnabledFor(it) {
 			if got <= want {
 				t.Errorf("%s should include plan cost: got=%d no-plan=%d", it.Path, got, want)
@@ -123,15 +124,15 @@ func TestEstimateFileTokens_UsesPerFilePlanPredicate(t *testing.T) {
 		}
 	}
 
-	withPlan := estimateCost(items, a.planEnabledFor, false, false)
-	withoutPlan := estimateCost(items, noPlan, false, false)
+	withPlan := estimateCost(items, a.planEnabledFor, false, false, llm.CountTokens)
+	withoutPlan := estimateCost(items, noPlan, false, false, llm.CountTokens)
 	if withPlan.TotalTokens <= withoutPlan.TotalTokens {
 		t.Fatalf("eligible files should add plan cost: with=%d without=%d", withPlan.TotalTokens, withoutPlan.TotalTokens)
 	}
 }
 
 func TestEstimateCost_EmptyItems(t *testing.T) {
-	est := estimateCost(nil, func(model.ScanItem) bool { return true }, true, true)
+	est := estimateCost(nil, func(model.ScanItem) bool { return true }, true, true, llm.CountTokens)
 	if est.Files != 0 || est.TotalTokens != 0 {
 		t.Errorf("empty input should yield zero estimate, got %+v", est)
 	}

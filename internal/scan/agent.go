@@ -110,6 +110,7 @@ func (a *Agent) summaryEnabled() bool {
 type Agent struct {
 	args             Args
 	items            []model.ScanItem
+	fileTokenCounts  map[string]int
 	currentDate      string
 	session          *session.SessionHistory
 	subtaskFailed    int64 // atomic
@@ -345,6 +346,7 @@ func (a *Agent) Run(ctx context.Context) ([]model.LlmComment, error) {
 	decisions := a.selectScanItems(a.items)
 	a.logSelection(decisions)
 	a.items = selectedScanItems(decisions)
+	a.reuseSelectionTokenCounts(decisions)
 
 	reviewable := len(a.items)
 	fmt.Fprintf(stdout.Writer(), "[ocr] full-scan: %d file(s) discovered, reviewing %d in %s\n",
@@ -363,7 +365,7 @@ func (a *Agent) Run(ctx context.Context) ([]model.LlmComment, error) {
 	}
 
 	// Pre-run cost projection so users aren't surprised by a large scan.
-	est := estimateCost(a.items, a.planEnabledFor, a.dedupEnabled(), a.summaryEnabled())
+	est := estimateCost(a.items, a.planEnabledFor, a.dedupEnabled(), a.summaryEnabled(), a.countFileTokens)
 	fmt.Fprintf(stdout.Writer(), "[ocr] estimated cost: %s\n", est)
 	if a.args.MaxTokensBudget > 0 {
 		fmt.Fprintf(stdout.Writer(), "[ocr] token budget: %s (dispatch stops once exceeded)\n", humanTokens(a.args.MaxTokensBudget))
@@ -711,7 +713,7 @@ func (a *Agent) dispatchBatch(ctx context.Context, batchIdx int, batch []model.S
 		// don't even queue work that would blow the budget.
 		if a.args.MaxTokensBudget > 0 {
 			used := a.runner.TotalTokensUsed()
-			projected := used + estimateFileTokens(it, a.planEnabledFor)
+			projected := used + estimateFileTokens(it, a.planEnabledFor, a.countFileTokens)
 			if projected > a.args.MaxTokensBudget {
 				fmt.Fprintf(stdout.Writer(), "[ocr] token budget reached (used %s + next-file est ≈ %s > budget %s) — skipping %s and remaining files\n",
 					humanTokens(used), humanTokens(projected), humanTokens(a.args.MaxTokensBudget), it.Path)
@@ -1215,4 +1217,26 @@ func (a *Agent) renderMessages(it model.ScanItem, rule, planGuidance string) []l
 		messages = append(messages, llm.NewTextMessage(m.Role, content))
 	}
 	return messages
+}
+
+// Selection owns tokenization; later estimates reuse its read-only results.
+// Keep content keys so another version of a path cannot use a stale count.
+func (a *Agent) reuseSelectionTokenCounts(decisions []scanSelection) {
+	a.fileTokenCounts = nil
+	if llmloop.PromptTokenLimit(a.args.Template.MaxTokens) <= 0 {
+		return
+	}
+	a.fileTokenCounts = make(map[string]int)
+	for _, decision := range decisions {
+		if decision.reason == model.ExcludeNone {
+			a.fileTokenCounts[decision.item.Content] = decision.tokens
+		}
+	}
+}
+
+func (a *Agent) countFileTokens(text string) int {
+	if tokens, ok := a.fileTokenCounts[text]; ok {
+		return tokens
+	}
+	return llm.CountTokens(text)
 }

@@ -180,6 +180,7 @@ type RuntimeConfig struct {
 type Agent struct {
 	args            Args
 	diffs           []model.Diff // parsed diffs
+	diffTokenCounts map[string]int
 	totalInsertions int64
 	totalDeletions  int64
 	currentDate     string
@@ -332,6 +333,7 @@ func (a *Agent) Run(ctx context.Context) ([]model.LlmComment, error) {
 		a.recordWarning("manifest_error", "", err.Error())
 	}
 	a.diffs = kept
+	a.reuseSelectionTokenCounts(decisions)
 
 	// One run-level skip signal, keyed on the selected set rather than on what
 	// the run keeps: deletions are retained for prompt context but never
@@ -396,7 +398,7 @@ func (a *Agent) Run(ctx context.Context) ([]model.LlmComment, error) {
 	// projected cost against their cap). Keeps the prior text-mode output
 	// unchanged for the common unlimited path.
 	if a.args.MaxTokensBudget > 0 {
-		est := estimateDiffCost(a.diffs)
+		est := estimateDiffCost(a.diffs, a.countDiffTokens)
 		fmt.Fprintf(stdout.Writer(), "[ocr] estimated cost: %s\n", est)
 		fmt.Fprintf(stdout.Writer(), "[ocr] token budget: %s (dispatch stops once exceeded)\n", humanTokens(a.args.MaxTokensBudget))
 		if est.TotalTokens > a.args.MaxTokensBudget {
@@ -663,7 +665,7 @@ func (a *Agent) dispatchSubtasks(ctx context.Context) ([]model.LlmComment, error
 
 	// Group files semantically via LLM.
 	groupResult := groupDiffs(ctx, nonDeleted, a.args.LLMClient, a.args.Model,
-		a.args.Template, llmloop.PromptTokenLimit(a.args.Template.MaxTokens),
+		a.args.Template, llmloop.PromptTokenLimit(a.args.Template.MaxTokens), a.countDiffTokens,
 		&groupingSessionOpts{session: a.session, provider: a.args.Provider, model: a.args.Model})
 	groups := groupResult.groups
 	a.fileGroups = groups
@@ -695,7 +697,7 @@ dispatchLoop:
 			used := a.runner.TotalTokensUsed()
 			var groupEst int64
 			for _, d := range group.Diffs {
-				groupEst += estimateDiffFileTokens(d)
+				groupEst += estimateDiffFileTokens(d, a.countDiffTokens)
 			}
 			projected := used + groupEst
 			if projected > a.args.MaxTokensBudget {

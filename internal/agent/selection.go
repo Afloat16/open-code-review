@@ -125,3 +125,25 @@ func summarizeSelection(decisions []fileDecision) ([]model.Diff, selectionCounts
 	}
 	return kept, counts
 }
+
+// Reuse only counts the pure size-selection pass actually produced. Text keys
+// prevent a later diff for the same path from inheriting an old count.
+func (a *Agent) reuseSelectionTokenCounts(decisions []fileDecision) {
+	a.diffTokenCounts = nil
+	if llmloop.PromptTokenLimit(a.args.Template.MaxTokens) <= 0 {
+		return
+	}
+	a.diffTokenCounts = make(map[string]int)
+	for _, decision := range decisions {
+		if decision.selected() {
+			a.diffTokenCounts[decision.Diff.Diff] = decision.DiffTokens
+		}
+	}
+}
+
+func (a *Agent) countDiffTokens(text string) int {
+	if tokens, ok := a.diffTokenCounts[text]; ok {
+		return tokens
+	}
+	return llm.CountTokens(text)
+}

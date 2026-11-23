@@ -319,7 +319,7 @@ func TestDispatchSubtasks_TokenBudgetStopsInFlightGroup(t *testing.T) {
 	diffs := makeBudgetDiffs(2)
 	// The gate admits both groups (estimate <= budget). The second group's
 	// second round pushes usage past the budget, so its third round is refused.
-	budget := estimateDiffFileTokens(diffs[1]) * 4
+	budget := estimateDiffFileTokens(diffs[1], llm.CountTokens) * 4
 	perCall := budget/2 + 1
 	fake := &fakeFirstDoneThenNeverClient{perCallTokens: perCall}
 	a := New(Args{
@@ -423,7 +423,7 @@ func (f *fakeCommentAndDoneClient) CompletionsWithCtx(_ context.Context, _ llm.C
 func TestDispatchSubtasks_TokenBudgetSkipsNextRoundAfterCompletedRound(t *testing.T) {
 	setTestHome(t, t.TempDir())
 	diffs := makeBudgetDiffs(1)
-	budget := estimateDiffFileTokens(diffs[0]) * 4
+	budget := estimateDiffFileTokens(diffs[0], llm.CountTokens) * 4
 	fake := &fakeCommentAndDoneClient{perCallTokens: budget + 1, path: diffs[0].NewPath}
 	collector := tool.NewCommentCollector()
 	reg := tool.NewRegistry()

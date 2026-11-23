@@ -147,7 +147,7 @@ func TestBudgetGate_PlanThreshold(t *testing.T) {
 				Content:   "package fixture\n" + strings.Repeat("var _ = 1\n", testCase.lineCount-1),
 				LineCount: testCase.lineCount,
 			}
-			budget := estimateFileTokens(item, func(model.ScanItem) bool { return testCase.includePlan })
+			budget := estimateFileTokens(item, func(model.ScanItem) bool { return testCase.includePlan }, llm.CountTokens)
 			client := &fakeBudgetClient{}
 			agent := NewAgent(Args{
 				MainToolDefs:    []llm.ToolDef{{Type: "function", Function: llm.FunctionDef{Name: "task_done"}}},

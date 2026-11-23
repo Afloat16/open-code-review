@@ -6,7 +6,6 @@ package agent
 import (
 	"fmt"
 
-	"github.com/alibaba/open-code-review/internal/llm"
 	"github.com/alibaba/open-code-review/internal/model"
 )
 
@@ -52,11 +51,11 @@ type Estimate struct {
 // files (they are skipped before dispatch and must not trip the gate). Used
 // both by the aggregate estimate (estimateDiffCost) and by the per-group budget
 // look-ahead in dispatchSubtasks, which sums this over a group's diffs.
-func estimateDiffFileTokens(d model.Diff) int64 {
+func estimateDiffFileTokens(d model.Diff, countTokens func(string) int) int64 {
 	if d.IsDeleted || d.Diff == "" {
 		return 0
 	}
-	diffTokens := int64(llm.CountTokens(d.Diff))
+	diffTokens := int64(countTokens(d.Diff))
 
 	// PLAN phase input/output (small JSON output).
 	total := diffTokens + promptOverheadTokens
@@ -70,14 +69,14 @@ func estimateDiffFileTokens(d model.Diff) int64 {
 // estimateDiffCost projects token usage for reviewing the given diffs. It is
 // the diff-path analogue of scan.estimateCost and is used for the pre-review
 // scale warning.
-func estimateDiffCost(diffs []model.Diff) Estimate {
+func estimateDiffCost(diffs []model.Diff, countTokens func(string) int) Estimate {
 	var est Estimate
 	for _, d := range diffs {
 		if d.IsDeleted || d.Diff == "" {
 			continue
 		}
 		est.Files++
-		diffTokens := int64(llm.CountTokens(d.Diff))
+		diffTokens := int64(countTokens(d.Diff))
 		est.InputTokens += diffTokens + promptOverheadTokens
 		est.OutputTokens += 400
 		est.InputTokens += (diffTokens + promptOverheadTokens) * avgMainRoundsPerFile

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alibaba/open-code-review/internal/llm"
 	"github.com/alibaba/open-code-review/internal/model"
 )
 
@@ -41,13 +42,13 @@ func TestHumanTokens(t *testing.T) {
 // before dispatch). Also asserts a normal diff projects a sane positive value
 // bounded below by the fixed per-file overhead.
 func TestEstimateDiffFileTokens_ZeroForSkipped(t *testing.T) {
-	if got := estimateDiffFileTokens(model.Diff{IsDeleted: true, Diff: "+x"}); got != 0 {
+	if got := estimateDiffFileTokens(model.Diff{IsDeleted: true, Diff: "+x"}, llm.CountTokens); got != 0 {
 		t.Errorf("deleted diff projected %d tokens, want 0", got)
 	}
-	if got := estimateDiffFileTokens(model.Diff{NewPath: "a.go", Diff: ""}); got != 0 {
+	if got := estimateDiffFileTokens(model.Diff{NewPath: "a.go", Diff: ""}, llm.CountTokens); got != 0 {
 		t.Errorf("empty diff projected %d tokens, want 0", got)
 	}
-	got := estimateDiffFileTokens(model.Diff{NewPath: "a.go", Diff: "+package main\nfunc f() {}\n"})
+	got := estimateDiffFileTokens(model.Diff{NewPath: "a.go", Diff: "+package main\nfunc f() {}\n"}, llm.CountTokens)
 	if got <= 0 {
 		t.Errorf("normal diff projected %d tokens, want > 0", got)
 	}
@@ -70,11 +71,11 @@ func TestEstimateDiffCost(t *testing.T) {
 		{NewPath: "c.go", IsDeleted: true, Diff: "+c\n"}, // skipped
 		{NewPath: "d.go", Diff: ""},                      // skipped
 	}
-	est := estimateDiffCost(diffs)
+	est := estimateDiffCost(diffs, llm.CountTokens)
 	if est.Files != 2 {
 		t.Errorf("Files = %d, want 2 (deleted + empty skipped)", est.Files)
 	}
-	perFile := estimateDiffFileTokens(diffs[0])
+	perFile := estimateDiffFileTokens(diffs[0], llm.CountTokens)
 	if est.TotalTokens != perFile*2 {
 		t.Errorf("TotalTokens = %d, want 2*%d = %d", est.TotalTokens, perFile, perFile*2)
 	}
@@ -94,8 +95,8 @@ func TestEstimateDiffCost(t *testing.T) {
 // TestEstimateDiffCost_ScalesWithContent verifies that a larger diff projects
 // strictly more tokens than a small one (the estimate isn't a flat constant).
 func TestEstimateDiffCost_ScalesWithContent(t *testing.T) {
-	small := estimateDiffFileTokens(model.Diff{NewPath: "a.go", Diff: "+x\n"})
-	large := estimateDiffFileTokens(model.Diff{NewPath: "a.go", Diff: strings.Repeat("line of code\n", 200)})
+	small := estimateDiffFileTokens(model.Diff{NewPath: "a.go", Diff: "+x\n"}, llm.CountTokens)
+	large := estimateDiffFileTokens(model.Diff{NewPath: "a.go", Diff: strings.Repeat("line of code\n", 200)}, llm.CountTokens)
 	if large <= small {
 		t.Errorf("expected large diff to project more tokens than small: large=%d small=%d", large, small)
 	}
