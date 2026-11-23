@@ -197,7 +197,7 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 	}
 
 	if result.IsError {
-		return fmt.Sprintf("MCP tool %q returned an error: %s", name, contentToText(result.Content)), nil
+		return "", fmt.Errorf("MCP tool %q returned an error: %s", name, contentToText(result.Content))
 	}
 
 	return contentToText(result.Content), nil

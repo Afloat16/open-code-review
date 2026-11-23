@@ -363,11 +363,11 @@ func TestNewClient_Integration(t *testing.T) {
 
 	t.Run("CallTool_error_result", func(t *testing.T) {
 		result, err := c.CallTool(ctx, "fail", nil)
-		if err != nil {
-			t.Fatalf("CallTool: %v", err)
+		if err == nil || !strings.Contains(err.Error(), `MCP tool "fail" returned an error: something went wrong`) {
+			t.Fatalf("CallTool error = %v, want the tool name and server diagnostic", err)
 		}
-		if result == "" {
-			t.Error("expected non-empty error message")
+		if result != "" {
+			t.Errorf("failed tool returned a success result: %q", result)
 		}
 	})
 
