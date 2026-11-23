@@ -125,7 +125,7 @@ func TestSearchProviderBoundaryOutcomes(test *testing.T) {
 		{name: "empty_old_tree", side: "old", searchText: "needle", baseIsEmpty: true, wantBody: "No matches found"},
 	} {
 		test.Run(scenario.name, func(test *testing.T) {
-			current := *code
+			current := &codeTools{runner: code.runner, comparison: code.comparison, allowed: code.allowed}
 			current.comparison.BaseIsEmpty = scenario.baseIsEmpty
 			if scenario.baseIsEmpty {
 				current.comparison.Old = ""

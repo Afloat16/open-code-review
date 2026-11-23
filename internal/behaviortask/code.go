@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/alibaba/open-code-review/internal/config/allowlist"
@@ -34,6 +35,24 @@ type codeTools struct {
 	allowed    map[string]map[string]bool
 	diffs      map[string]model.Diff
 	scope      []Change
+	findMu     sync.Mutex
+	findPaths  map[string][]string
+}
+
+func (code *codeTools) pathsForFind(side string) []string {
+	code.findMu.Lock()
+	defer code.findMu.Unlock()
+	if paths, exists := code.findPaths[side]; exists {
+		return paths
+	}
+	// The authorized trees are fixed for this comparison. Reuse their order
+	// so a bounded search does not sort the entire repository on every call.
+	paths := slices.Sorted(maps.Keys(code.allowed[side]))
+	if code.findPaths == nil {
+		code.findPaths = make(map[string][]string)
+	}
+	code.findPaths[side] = paths
+	return paths
 }
 
 func prepareCodeTools(ctx context.Context, input Input) (*codeTools, error) {
@@ -171,7 +190,7 @@ func (code *codeTools) execute(ctx context.Context, name string, args map[string
 		if err := ctx.Err(); err != nil {
 			return observation, err
 		}
-		paths := slices.Sorted(maps.Keys(code.allowed[side]))
+		paths := code.pathsForFind(side)
 		query, _ := args["query_name"].(string)
 		sensitive, _ := args["case_sensitive"].(bool)
 		matches, err := tool.MatchFileNames(ctx, paths, query, sensitive, 101, func(filePath string) bool { return code.allowed[side][filePath] })
