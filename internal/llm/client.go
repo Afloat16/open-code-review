@@ -1561,6 +1561,7 @@ func (c *AnthropicClient) buildAnthropicParams(model string, req ChatRequest) (a
 	var systemBlocks []anthropic.TextBlockParam
 	var messages []anthropic.MessageParam
 	var pendingToolResults []Message
+	lastNativeMessage := -1
 
 	flushToolResults := func() {
 		if len(pendingToolResults) == 0 {
@@ -1594,6 +1595,7 @@ func (c *AnthropicClient) buildAnthropicParams(model string, req ChatRequest) (a
 			// when the cache_control breakpoint writes below.
 			if native, ok := msg.Native.Payload.(anthropic.MessageParam); ok && len(native.Content) > 0 {
 				native.Content = append([]anthropic.ContentBlockParamUnion(nil), native.Content...)
+				lastNativeMessage = len(messages)
 				messages = append(messages, native)
 				continue
 			}
@@ -1684,12 +1686,16 @@ func (c *AnthropicClient) buildAnthropicParams(model string, req ChatRequest) (a
 		last := &messages[len(messages)-1]
 		if n := len(last.Content); n > 0 {
 			lastIdx := n - 1
-			// Clone before mutating: the block may be shared with stored history.
-			cloned, err := cloneContentBlockParam(last.Content[lastIdx])
+			block := last.Content[lastIdx]
+			var err error
+			// Only native replay blocks share pointers with stored history.
+			if lastNativeMessage == len(messages)-1 {
+				block, err = cloneContentBlockParam(block)
+			}
 			if err == nil {
-				if cc := cloned.GetCacheControl(); cc != nil {
+				if cc := block.GetCacheControl(); cc != nil {
 					*cc = anthropic.NewCacheControlEphemeralParam()
-					last.Content[lastIdx] = cloned
+					last.Content[lastIdx] = block
 				}
 			}
 		}
