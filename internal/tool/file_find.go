@@ -74,29 +74,33 @@ func MatchFileNames(ctx context.Context, files []string, queryName string, caseS
 		queryCmp = strings.ToLower(query)
 	}
 
-	// 1. First pass: match against base filename (maintains precision for pure filename queries).
+	// A directory query cannot match a basename. Skip that pass so bounded
+	// full-path results do not first scan every unrelated filename.
 	var matched []string
-	for _, f := range files {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		base := f
-		if idx := strings.LastIndex(f, "/"); idx != -1 {
-			base = f[idx+1:]
-		}
-		baseCmp := base
-		if !caseSensitive {
-			baseCmp = strings.ToLower(base)
-		}
-		if strings.Contains(baseCmp, queryCmp) && (allowed == nil || allowed(f)) {
-			matched = append(matched, f)
-		}
-		if len(matched) >= limit {
-			break
+	if !strings.Contains(query, "/") {
+		// Match basenames first to preserve precision for filename queries.
+		for _, f := range files {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			base := f
+			if idx := strings.LastIndex(f, "/"); idx != -1 {
+				base = f[idx+1:]
+			}
+			baseCmp := base
+			if !caseSensitive {
+				baseCmp = strings.ToLower(base)
+			}
+			if strings.Contains(baseCmp, queryCmp) && (allowed == nil || allowed(f)) {
+				matched = append(matched, f)
+			}
+			if len(matched) >= limit {
+				break
+			}
 		}
 	}
 
-	// 2. Fallback pass: if basename match returned no results, match against the full relative path
+	// If basename matching returned no results, match against the full relative path
 	// (enables directory-scoped queries such as `pkg/util` or `internal/diff`).
 	if len(matched) == 0 {
 		for _, f := range files {
