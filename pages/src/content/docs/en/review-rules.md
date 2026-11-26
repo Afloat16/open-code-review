@@ -135,6 +135,31 @@ only. If two of your own entries match the same file, the first one
 still wins outright — `merge_system_rule` does not combine them with
 each other.
 
+### Requesting finding severity in a rule
+
+A `rules[]` entry has no separate `severity` configuration field. Instead,
+describe the desired severity for a specific condition in the `rule` text:
+
+```json
+{
+  "rules": [
+    {
+      "path": "src/api/**/*.go",
+      "rule": "Report missing request validation as high severity; report naming inconsistencies as low severity.",
+      "merge_system_rule": true
+    }
+  ]
+}
+```
+
+This text becomes part of the review prompt, not an enforced severity mapping.
+The model can submit findings with `critical`, `high`, `medium` or `low`
+severity, but its actual output may vary. Use
+`ocr rules check src/api/handler.go` to confirm the rule text is selected;
+this does not validate the model's severity choices. To inspect only high
+and critical findings in a saved session, use
+`ocr session comments --severity critical,high <session-id>`.
+
 ### Glob features
 
 OCR uses [`bmatcuk/doublestar/v4`](https://pkg.go.dev/github.com/bmatcuk/doublestar/v4)
