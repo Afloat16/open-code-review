@@ -119,6 +119,30 @@ Security review: flag hardcoded secrets, unvalidated redirects, and missing auth
 需要牢记的限制：合并只触及**系统**层。如果你自己的两条条目匹配同一个文件，
 靠前的那条仍然完全胜出——`merge_system_rule` 不会把它们彼此合并。
 
+### 在规则中指定问题严重程度
+
+`rules[]` 不支持独立的 `severity` 配置字段。可以在 `rule` 文本中
+要求模型对符合条件的问题使用指定级别，例如：
+
+```json
+{
+  "rules": [
+    {
+      "path": "src/api/**/*.go",
+      "rule": "Report missing request validation as high severity; report naming inconsistencies as low severity.",
+      "merge_system_rule": true
+    }
+  ]
+}
+```
+
+这段文字会进入评审 prompt，而不是由 OCR 强制执行的级别映射。
+模型提交的问题可带有 `critical`、`high`、`medium` 或 `low` 级别；
+实际输出仍取决于模型。用 `ocr rules check src/api/handler.go`
+确认规则文本是否生效，但该命令不会验证模型是否遵循级别要求。
+若只想查看已保存的高严重程度问题，可使用
+`ocr session comments --severity critical,high <session-id>`。
+
 ### glob 能力
 
 OCR 用 [`bmatcuk/doublestar/v4`](https://pkg.go.dev/github.com/bmatcuk/doublestar/v4)
