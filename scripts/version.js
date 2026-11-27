@@ -24,10 +24,28 @@ function semverGt(a, b) {
     if (pa[i] > pb[i]) return true;
     if (pa[i] < pb[i]) return false;
   }
-  const aPre = aWithoutBuild.includes("-");
-  const bPre = bWithoutBuild.includes("-");
-  if (bPre && !aPre) return true;
-  return false;
+  const aPre = aWithoutBuild.indexOf("-");
+  const bPre = bWithoutBuild.indexOf("-");
+  if (aPre === -1 || bPre === -1) return aPre === -1 && bPre !== -1;
+
+  const aIds = aWithoutBuild.slice(aPre + 1).split(".");
+  const bIds = bWithoutBuild.slice(bPre + 1).split(".");
+  for (let i = 0; i < Math.min(aIds.length, bIds.length); i++) {
+    const x = aIds[i];
+    const y = bIds[i];
+    if (x === y) continue;
+    const xNumeric = /^\d+$/.test(x);
+    const yNumeric = /^\d+$/.test(y);
+    if (xNumeric && yNumeric) {
+      const xn = BigInt(x);
+      const yn = BigInt(y);
+      if (xn !== yn) return xn > yn;
+      continue;
+    }
+    if (xNumeric !== yNumeric) return !xNumeric;
+    return x > y;
+  }
+  return aIds.length > bIds.length;
 }
 
 function shouldShowUpdateHint(hintVersion, installedVersion) {

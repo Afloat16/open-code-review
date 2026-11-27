@@ -29,6 +29,20 @@ assert.strictEqual(semverGt("1.8.6+build.2", "1.8.6+build.1"), false);
 assert.strictEqual(semverGt("1.8.6", "1.8.6-beta.1+build.1"), true);
 assert.strictEqual(semverGt("not-a-version", "1.8.6"), false);
 
+// Compare prerelease identifiers using SemVer precedence, not string order.
+assert.strictEqual(semverGt("1.8.6-beta.2", "1.8.6-beta.1"), true);
+assert.strictEqual(semverGt("1.8.6-beta.10", "1.8.6-beta.2"), true);
+assert.strictEqual(semverGt("1.8.6-beta.2", "1.8.6-beta.10"), false);
+assert.strictEqual(semverGt("1.8.6-rc.1", "1.8.6-beta.9"), true);
+assert.strictEqual(semverGt("1.8.6-alpha.beta", "1.8.6-alpha.1"), true);
+assert.strictEqual(semverGt("1.8.6-alpha.1", "1.8.6-alpha"), true);
+assert.strictEqual(semverGt("1.8.6-alpha", "1.8.6-alpha.1"), false);
+assert.strictEqual(semverGt("1.8.6-rc.1+new", "1.8.6-rc.1+old"), false);
+assert.strictEqual(semverGt("1.8.6-rc.1", "1.8.6"), false);
+assert.strictEqual(semverGt("1.8.6-9007199254740993", "1.8.6-9007199254740992"), true);
+assert.strictEqual(shouldShowUpdateHint("1.8.6-beta.2", "1.8.6-beta.1"), true);
+assert.strictEqual(shouldShowUpdateHint("1.8.6-beta.1", "1.8.6-beta.2"), false);
+
 assert.strictEqual(shouldShowUpdateHint("1.8.7", "1.8.6"), true);
 assert.strictEqual(shouldShowUpdateHint("1.8.6", "1.8.6"), false);
 assert.strictEqual(shouldShowUpdateHint("1.8.5", "1.8.6"), false);
